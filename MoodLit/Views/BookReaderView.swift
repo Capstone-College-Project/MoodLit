@@ -145,6 +145,10 @@ struct BookReaderView: View {
             ReaderSettingsSheet(settings: settings, tracker: tracker)
         }
         .onAppear { setup() }
+        .onChange(of: book?.sceneTags.count) { _ in
+            guard let book, let playlist else { return }
+            musicEngine.load(sceneTags: book.sceneTags, playlist: playlist)
+        }
         .onDisappear { saveProgress() }
         .onChange(of: scenePhase) { _ in
             if scenePhase == .background || scenePhase == .inactive { saveProgress() }
@@ -157,6 +161,8 @@ struct BookReaderView: View {
             tracker.activePage = page.number
             tracker.activeLine = 0
             tracker.isAutoScrolling = false
+            // Re-evaluate music for the new page at line 0
+            musicEngine.onLineChanged(page: page.number, line: 0)
         }
     }
 
@@ -436,10 +442,23 @@ struct PageView: View {
             }
         }
 
-        if bestIdx != tracker.activeLine {
-            tracker.activeLine = bestIdx
-            musicEngine.onLineChanged(page: tracker.activePage, line: bestIdx)
+        // Step one line at a time so the marker walks through every line
+        // and music triggers exactly when the marker reaches a tagged line
+        let current = tracker.activeLine
+        let nextLine: Int
+        if bestIdx > current {
+            nextLine = current + 1
+        } else if bestIdx < current {
+            nextLine = current - 1
+        } else {
+            nextLine = current
         }
+
+        if nextLine != tracker.activeLine {
+            tracker.activeLine = nextLine
+        }
+
+        musicEngine.onLineChanged(page: tracker.activePage, line: tracker.activeLine)
     }
 }
 

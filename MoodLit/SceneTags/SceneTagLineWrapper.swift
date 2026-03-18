@@ -104,7 +104,7 @@ struct SceneTagLineWrapper<Content: View>: View {
                     bookID: bookID,
                     page: page,
                     startLine: lineIndex,
-                    endLine: lineIndex + 5,
+                    endLine: lineIndex,
                     playlist: playlist
                 )
             }

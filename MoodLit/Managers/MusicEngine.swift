@@ -33,7 +33,10 @@ class MusicEngine: ObservableObject {
     // MARK: - Called by LineTracker / detectActiveLine when marker moves
 
     func onLineChanged(page: Int, line: Int) {
-        guard let tag = findTag(page: page, line: line) else { return }
+        guard let tag = findTag(page: page, line: line) else {
+            if activeTagID != nil { stop() }
+            return
+        }
         guard tag.id != activeTagID else { return }
         activeTagID = tag.id
 
