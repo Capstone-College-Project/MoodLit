@@ -1,0 +1,92 @@
+//
+//  PlaylistPickerSheet.swift
+//  MoodLit
+//
+//  Created by Anthony Chang Martinez on 3/11/26.
+//
+
+import SwiftUI
+
+struct PlaylistPickerSheet: View {
+    let book: Book
+
+    @ObservedObject private var store = PlaylistStore.shared
+    @ObservedObject private var library = LibraryManager.shared
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.bg.ignoresSafeArea()
+
+                if store.playlists.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "music.note.list")
+                            .font(.system(size: 40))
+                            .foregroundColor(Color.text2)
+                        Text("No playlists yet")
+                            .font(.headline)
+                            .foregroundColor(Color.text)
+                        Text("Create a playlist first.")
+                            .font(.subheadline)
+                            .foregroundColor(Color.text2)
+                    }
+                } else {
+                    List {
+                        ForEach(store.playlists) { playlist in
+                            Button {
+                                library.assignPlaylist(playlist.id, to: book.id)
+                                dismiss()
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(playlist.name)
+                                            .font(.subheadline.weight(.medium))
+                                            .foregroundColor(Color.text)
+                                        Text("\(playlist.emotions.count) categories")
+                                            .font(.caption)
+                                            .foregroundColor(Color.text2)
+                                    }
+                                    Spacer()
+                                    if book.assignedPlaylistID == playlist.id {
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundColor(Color.gold)
+                                    }
+                                }
+                                .padding(.vertical, 4)
+                            }
+                            .listRowBackground(
+                                book.assignedPlaylistID == playlist.id
+                                    ? Color.gold.opacity(0.08) : Color.surface
+                            )
+                        }
+
+                        // Option to unassign
+                        if book.assignedPlaylistID != nil {
+                            Button {
+                                library.assignPlaylist(nil, to: book.id)
+                                dismiss()
+                            } label: {
+                                Text("Remove Playlist")
+                                    .font(.subheadline)
+                                    .foregroundColor(.red)
+                            }
+                            .listRowBackground(Color.surface)
+                        }
+                    }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                }
+            }
+            .navigationTitle("Assign Playlist")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") { dismiss() }
+                        .foregroundColor(Color.text2)
+                }
+            }
+        }
+    }
+}
