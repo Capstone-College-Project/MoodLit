@@ -156,6 +156,7 @@ struct BookCard: View {
     @State private var showDeleteConfirm: Bool = false
     @State private var showPlaylistPicker: Bool = false
     @State private var showAddChapter: Bool = false
+    @State private var showSceneMap: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -226,6 +227,9 @@ struct BookCard: View {
         .sheet(isPresented: $showAddChapter) {
             AddChapterSheet(bookID: book.id)
         }
+        .sheet(isPresented: $showSceneMap) {
+            SceneMapView(bookID: book.id)
+        }
     }
 
     // MARK: - Cover Image
@@ -251,7 +255,6 @@ struct BookCard: View {
                     }
                 }
             } else {
-                // Web novel or no cover
                 if book.isWebNovel {
                     webNovelPlaceholder
                 } else {
@@ -291,7 +294,7 @@ struct BookCard: View {
     private var menuButton: some View {
         Menu {
             Button {
-                // wire up NavigationLink when SceneMapView is ready
+                showSceneMap = true
             } label: {
                 Label("Scene Map", systemImage: "map")
             }
@@ -302,7 +305,6 @@ struct BookCard: View {
                 Label("Assign Playlist", systemImage: "music.note.list")
             }
 
-            // Show "Add Chapter" only for web novels
             if book.isWebNovel {
                 Button {
                     showAddChapter = true

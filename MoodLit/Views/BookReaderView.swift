@@ -145,10 +145,6 @@ struct BookReaderView: View {
             ReaderSettingsSheet(settings: settings, tracker: tracker)
         }
         .onAppear { setup() }
-        .onChange(of: book?.sceneTags.count) { _ in
-            guard let book, let playlist else { return }
-            musicEngine.load(sceneTags: book.sceneTags, playlist: playlist)
-        }
         .onDisappear { saveProgress() }
         .onChange(of: scenePhase) { _ in
             if scenePhase == .background || scenePhase == .inactive { saveProgress() }
@@ -161,8 +157,11 @@ struct BookReaderView: View {
             tracker.activePage = page.number
             tracker.activeLine = 0
             tracker.isAutoScrolling = false
-            // Re-evaluate music for the new page at line 0
-            musicEngine.onLineChanged(page: page.number, line: 0)
+            musicEngine.stop()
+        }
+        .onChange(of: book?.sceneTags.count) { _ in
+            guard let book, let playlist else { return }
+            musicEngine.load(sceneTags: book.sceneTags, playlist: playlist)
         }
     }
 
@@ -238,13 +237,22 @@ struct BookReaderView: View {
         if currentPageIndex < pages.count {
             tracker.activePage = pages[currentPageIndex].number
         }
+        if book.readingProgress.lineIndex > 0 {
+            tracker.targetLine = book.readingProgress.lineIndex
+        }
+        // Parse epub on first open if chapters haven't been loaded yet
+        if book.chapters.isEmpty && !hasLoaded && !book.localEPUBPath.isEmpty {
+            hasLoaded = true
+            Task { await loadEpubContent() }
+        }
     }
-    
+
     private func saveProgress() {
         guard let book else { return }
         musicEngine.stop()
         var progress = book.readingProgress
         progress.pageIndex = currentPageIndex
+        progress.lineIndex = tracker.activeLine
         LibraryManager.shared.updateProgress(for: book.id, progress: progress)
     }
 
@@ -289,6 +297,7 @@ struct PageView: View {
     // Manual scroll — direction locking
     @State private var dragStartOffset: CGFloat = 0
     @State private var dragDirection: DragDirection = .undecided
+    @State private var hasScrolledToTarget: Bool = false
 
     private enum DragDirection {
         case undecided, vertical, horizontal
@@ -300,7 +309,6 @@ struct PageView: View {
     var body: some View {
         GeometryReader { geo in
             let containerH = geo.size.height
-            // Compute marker Y from the saved setting (0.0–1.0 → top to bottom)
             let markerY = topPadding + (containerH - topPadding - 80) * CGFloat(settings.markerPosition)
 
             ZStack(alignment: .topTrailing) {
@@ -399,8 +407,18 @@ struct PageView: View {
             .onReceive(ticker) { _ in
                 guard tracker.activePage == page.number else { return }
 
-                // Keep tracker.markerY in sync with settings
                 tracker.markerY = markerY
+
+                // Scroll to target line once lineStaticY is ready
+                if !hasScrolledToTarget, let target = tracker.targetLine,
+                   let targetY = lineStaticY[target], !lineStaticY.isEmpty {
+                    let offset = max(0, targetY + topPadding - markerY)
+                    let maxOffset = maxScrollOffset(markerY: markerY)
+                    scrollOffset = min(offset, maxOffset)
+                    tracker.activeLine = target
+                    tracker.targetLine = nil
+                    hasScrolledToTarget = true
+                }
 
                 if tracker.isAutoScrolling {
                     let pxPerFrame = tracker.scrollSpeed / 60.0
@@ -419,6 +437,7 @@ struct PageView: View {
             scrollOffset = 0
             lineStaticY = [:]
             dragDirection = .undecided
+            hasScrolledToTarget = false
         }
     }
 
@@ -442,8 +461,6 @@ struct PageView: View {
             }
         }
 
-        // Step one line at a time so the marker walks through every line
-        // and music triggers exactly when the marker reaches a tagged line
         let current = tracker.activeLine
         let nextLine: Int
         if bestIdx > current {
@@ -463,7 +480,6 @@ struct PageView: View {
 }
 
 // MARK: - PageMarkerView
-// Display-only marker — position controlled by settings.
 
 struct PageMarkerView: View {
     let markerY: CGFloat
@@ -471,8 +487,6 @@ struct PageMarkerView: View {
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-
-            // Marker line + dot
             HStack(spacing: 0) {
                 Rectangle()
                     .fill(
@@ -492,7 +506,6 @@ struct PageMarkerView: View {
             .frame(maxWidth: .infinity)
             .offset(y: markerY)
 
-            // Current track label
             if let track = musicEngine.currentTrack {
                 HStack(spacing: 5) {
                     Image(systemName: "music.note")
@@ -647,7 +660,6 @@ struct ReaderSettingsSheet: View {
                                 .foregroundColor(Color.text2)
                         }
 
-                        // Mini preview
                         ZStack(alignment: .leading) {
                             RoundedRectangle(cornerRadius: 8)
                                 .fill(settings.backgroundTheme.backgroundColor)
@@ -657,7 +669,6 @@ struct ReaderSettingsSheet: View {
                                         .stroke(Color.surface3, lineWidth: 1)
                                 )
 
-                            // Fake text lines
                             VStack(alignment: .leading, spacing: 4) {
                                 ForEach(0..<5) { i in
                                     RoundedRectangle(cornerRadius: 1)
@@ -668,7 +679,6 @@ struct ReaderSettingsSheet: View {
                             .padding(.leading, 12)
                             .padding(.vertical, 10)
 
-                            // Marker line preview
                             Rectangle()
                                 .fill(Color.gold.opacity(0.6))
                                 .frame(height: 1.5)

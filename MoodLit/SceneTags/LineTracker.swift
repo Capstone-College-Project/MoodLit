@@ -6,6 +6,11 @@
 // The MusicEngine observes this to trigger track changes.
 
 
+// LineTracker.swift
+// MoodLit
+//
+// Tracks which page and line the marker is currently on.
+
 import Foundation
 import Combine
 import CoreGraphics
@@ -20,7 +25,10 @@ class LineTracker: ObservableObject {
     @Published var markerY: CGFloat = 120
     @Published var dragStartY: CGFloat = 120
     @Published var isAutoScrolling: Bool = false
-    @Published var scrollSpeed: Double = 30        // points per second
+    @Published var scrollSpeed: Double = 30
+
+    // MARK: - Scroll-to-scene
+    @Published var targetLine: Int? = nil
 
     // MARK: - Internal
     var lineAccumulator: Double = 0
@@ -40,8 +48,6 @@ class LineTracker: ObservableObject {
     }
 
     // MARK: - Marker drag
-    // PageView's detectActiveLine handles line detection from geometry —
-    // LineTracker just stores the Y position.
 
     func markerMoved(to y: CGFloat) {
         markerY = y
@@ -57,8 +63,6 @@ class LineTracker: ObservableObject {
 
     func tick() {
         guard isAutoScrolling else { return }
-        // Actual scrollOffset increment happens in PageView's onReceive(ticker)
-        // This is kept for any future line-based advance logic
     }
 
     // MARK: - Progress
