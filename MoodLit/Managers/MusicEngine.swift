@@ -17,6 +17,8 @@ class MusicEngine: ObservableObject {
 
     // MARK: - Private
     private var currentPlayer: AVAudioPlayer?
+    private var fadingOutPlayers: [AVAudioPlayer] = []
+    private var fadeTimers: [Timer] = []
     private var sceneTags: [SceneTag] = []
     private var playlist: Playlist?
     private var activeTagID: UUID? = nil
@@ -87,7 +89,19 @@ class MusicEngine: ObservableObject {
     }
 
     func stop() {
-        fadeOut(player: currentPlayer)
+        // Kill all timers first — prevents ghost audio
+        for timer in fadeTimers {
+            timer.invalidate()
+        }
+        fadeTimers.removeAll()
+
+        // Hard-stop everything
+        for player in fadingOutPlayers {
+            player.stop()
+        }
+        fadingOutPlayers.removeAll()
+
+        currentPlayer?.stop()
         currentPlayer = nil
         isPlaying = false
         currentTrack = nil
@@ -127,12 +141,29 @@ class MusicEngine: ObservableObject {
     }
 
     private func startCrossfade(with newPlayer: AVAudioPlayer) {
+        // 1. Kill ALL pending fade timers — prevents ghost audio stacking
+        for timer in fadeTimers {
+            timer.invalidate()
+        }
+        fadeTimers.removeAll()
+
+        // 2. Hard-stop any players still fading out
+        for player in fadingOutPlayers {
+            player.stop()
+        }
+        fadingOutPlayers.removeAll()
+
+        // 3. Fade out current player
+        if let old = currentPlayer {
+            fadingOutPlayers.append(old)
+            fadeOut(player: old)
+        }
+
+        // 4. Start new player
         newPlayer.volume = 0
         newPlayer.numberOfLoops = -1
         newPlayer.play()
         isPlaying = true
-
-        if let old = currentPlayer { fadeOut(player: old) }
         fadeIn(player: newPlayer, to: volume)
         currentPlayer = newPlayer
     }
@@ -142,11 +173,12 @@ class MusicEngine: ObservableObject {
         let stepVolume = target / steps
         let interval = Double(crossfadeDuration) / Double(steps)
         var current: Float = 0
-        Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { timer in
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { timer in
             current += stepVolume
             player.volume = min(current, target)
             if current >= target { timer.invalidate() }
         }
+        fadeTimers.append(timer)
     }
 
     private func fadeOut(player: AVAudioPlayer?) {
@@ -155,12 +187,15 @@ class MusicEngine: ObservableObject {
         let steps: Float = 30
         let stepVolume = startVolume / steps
         let interval = Double(crossfadeDuration) / Double(steps)
-        Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { timer in
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] timer in
             player.volume = max(player.volume - stepVolume, 0)
             if player.volume <= 0 {
                 player.stop()
                 timer.invalidate()
+                self?.fadingOutPlayers.removeAll { $0 === player }
+                self?.fadeTimers.removeAll { $0 === timer }
             }
         }
+        fadeTimers.append(timer)
     }
 }

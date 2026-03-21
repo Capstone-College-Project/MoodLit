@@ -5,10 +5,6 @@
 //  Created by Anthony Chang Martinez on 3/8/26.
 //
 
-
-// EmotionCategorySection.swift
-// MoodLit
-
 import SwiftUI
 import UniformTypeIdentifiers
 

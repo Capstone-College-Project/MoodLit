@@ -6,11 +6,6 @@
 // The MusicEngine observes this to trigger track changes.
 
 
-// LineTracker.swift
-// MoodLit
-//
-// Tracks which page and line the marker is currently on.
-
 import Foundation
 import Combine
 import CoreGraphics

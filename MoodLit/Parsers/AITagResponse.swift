@@ -45,18 +45,11 @@ struct UnresolvedTag: Identifiable {
 // MARK: - Parser
 
 struct SceneTagParser {
-
-    /// Parse raw JSON data from AI response into SceneTags.
-    /// - Parameters:
-    ///   - data: Raw JSON data returned by AI
-    ///   - playlist: Active playlist used to resolve category names
-    /// - Returns: SceneTagParseResult with resolved and unresolved tags
     static func parse(data: Data, against playlist: Playlist) throws -> SceneTagParseResult {
         let response = try JSONDecoder().decode(AITagResponse.self, from: data)
         return parse(response: response, against: playlist)
     }
 
-    /// Parse from a JSON string directly.
     static func parse(json: String, against playlist: Playlist) throws -> SceneTagParseResult {
         guard let data = json.data(using: .utf8) else {
             throw SceneTagParserError.invalidJSON

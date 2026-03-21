@@ -19,6 +19,7 @@ struct AddChapterSheet: View {
     @State private var chapterText: String = ""
     @State private var showFilePicker: Bool = false
     @State private var importError: String? = nil
+    @State private var isImporting: Bool = false
 
     private var book: Book? {
         library.books.first { $0.id == bookID }
@@ -66,10 +67,15 @@ struct AddChapterSheet: View {
                                     Image(systemName: "doc.text")
                                         .foregroundColor(Color.gold)
                                         .font(.system(size: 14))
-                                    Text("Upload .txt file")
+                                    Text("Upload .epub file")
                                         .font(.subheadline)
                                         .foregroundColor(Color.gold)
                                     Spacer()
+                                    if isImporting {
+                                        ProgressView()
+                                            .tint(Color.gold)
+                                            .scaleEffect(0.7)
+                                    }
                                 }
                                 .padding(12)
                                 .background(Color.surface)
@@ -80,6 +86,11 @@ struct AddChapterSheet: View {
                                 )
                             }
                             .buttonStyle(.plain)
+                            .disabled(isImporting)
+
+                            Text("The epub will be parsed and its text added as a chapter.")
+                                .font(.caption2)
+                                .foregroundColor(Color.text2)
 
                             if let error = importError {
                                 Text(error)
@@ -134,15 +145,15 @@ struct AddChapterSheet: View {
             }
             .fileImporter(
                 isPresented: $showFilePicker,
-                allowedContentTypes: [.plainText],
+                allowedContentTypes: [.epub],
                 allowsMultipleSelection: false
             ) { result in
-                handleFileImport(result)
+                handleEpubImport(result)
             }
         }
     }
 
-    // MARK: - Save
+    // MARK: - Save from pasted text
 
     private func saveChapter() {
         let title = chapterTitle.trimmingCharacters(in: .whitespaces)
@@ -151,10 +162,8 @@ struct AddChapterSheet: View {
         let text = chapterText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
 
-        // Split text into lines, then paginate
         let allLines = text.components(separatedBy: .newlines)
             .flatMap { line -> [String] in
-                // Keep empty lines as spacing
                 if line.trimmingCharacters(in: .whitespaces).isEmpty {
                     return [""]
                 }
@@ -172,7 +181,6 @@ struct AddChapterSheet: View {
             pages.append(BookPage(number: pageNumber, lines: pageLines))
         }
 
-        // At least one page even if very short
         if pages.isEmpty {
             pages.append(BookPage(number: existingPageCount + 1, lines: allLines))
         }
@@ -182,9 +190,9 @@ struct AddChapterSheet: View {
         dismiss()
     }
 
-    // MARK: - File Import
+    // MARK: - ePub Import
 
-    private func handleFileImport(_ result: Result<[URL], Error>) {
+    private func handleEpubImport(_ result: Result<[URL], Error>) {
         importError = nil
 
         guard case .success(let urls) = result, let url = urls.first else {
@@ -196,19 +204,69 @@ struct AddChapterSheet: View {
             importError = "Permission denied."
             return
         }
-        defer { url.stopAccessingSecurityScopedResource() }
 
-        do {
-            let content = try String(contentsOf: url, encoding: .utf8)
-            chapterText = content
+        isImporting = true
 
-            // Auto-fill title from filename if empty
-            if chapterTitle.trimmingCharacters(in: .whitespaces).isEmpty {
-                let name = url.deletingPathExtension().lastPathComponent
-                chapterTitle = name
+        Task {
+            defer {
+                url.stopAccessingSecurityScopedResource()
+                Task { @MainActor in isImporting = false }
             }
-        } catch {
-            importError = "Could not read file: \(error.localizedDescription)"
+
+            do {
+                // Copy to Documents first
+                let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                let destURL = docs.appendingPathComponent(url.lastPathComponent)
+                if !FileManager.default.fileExists(atPath: destURL.path) {
+                    try FileManager.default.copyItem(at: url, to: destURL)
+                }
+
+                let parser = EpubParser()
+                let parsed = try await Task.detached(priority: .userInitiated) {
+                    try parser.parse(url: destURL)
+                }.value
+
+                await MainActor.run {
+                    let existingPageCount = book?.allPages.count ?? 0
+
+                    if parsed.chapters.isEmpty {
+                        importError = "No readable content found in this epub."
+                        return
+                    }
+
+                    // Add each parsed chapter to the web novel
+                    for (idx, parsedChapter) in parsed.chapters.enumerated() {
+                        // Renumber pages to continue from existing pages
+                        let renumberedPages = parsedChapter.pages.enumerated().map { pageIdx, page in
+                            BookPage(
+                                number: existingPageCount + pageIdx + 1,
+                                lines: page.lines
+                            )
+                        }
+
+                        let chapterTitle: String
+                        if !parsedChapter.title.isEmpty && parsedChapter.title != "Chapter" {
+                            chapterTitle = parsedChapter.title
+                        } else {
+                            chapterTitle = "Chapter \(nextChapterNumber + idx)"
+                        }
+
+                        let chapter = Chapter(title: chapterTitle, pages: renumberedPages)
+                        library.addChapter(chapter, to: bookID)
+                    }
+
+                    // Auto-fill title from epub if empty
+                    if chapterTitle.trimmingCharacters(in: .whitespaces).isEmpty {
+                        chapterTitle = parsed.title
+                    }
+
+                    dismiss()
+                }
+            } catch {
+                await MainActor.run {
+                    importError = "Failed to parse epub: \(error.localizedDescription)"
+                }
+            }
         }
     }
 }

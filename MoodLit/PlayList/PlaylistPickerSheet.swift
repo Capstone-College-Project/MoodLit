@@ -54,25 +54,44 @@ struct PlaylistPickerSheet: View {
                                             .foregroundColor(Color.gold)
                                     }
                                 }
-                                .padding(.vertical, 4)
+                                .padding(12)
+                                .background(
+                                    book.assignedPlaylistID == playlist.id
+                                        ? Color.gold.opacity(0.08) : Color.surface
+                                )
+                                .cornerRadius(12)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(
+                                            book.assignedPlaylistID == playlist.id
+                                                ? Color.gold.opacity(0.3) : Color.clear,
+                                            lineWidth: 1
+                                        )
+                                )
                             }
-                            .listRowBackground(
-                                book.assignedPlaylistID == playlist.id
-                                    ? Color.gold.opacity(0.08) : Color.surface
-                            )
+                            .listRowBackground(Color.bg)
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                         }
 
-                        // Option to unassign
                         if book.assignedPlaylistID != nil {
                             Button {
                                 library.assignPlaylist(nil, to: book.id)
                                 dismiss()
                             } label: {
-                                Text("Remove Playlist")
-                                    .font(.subheadline)
-                                    .foregroundColor(.red)
+                                HStack {
+                                    Text("Remove Playlist")
+                                        .font(.subheadline)
+                                        .foregroundColor(.red)
+                                    Spacer()
+                                }
+                                .padding(12)
+                                .background(Color.surface)
+                                .cornerRadius(12)
                             }
-                            .listRowBackground(Color.surface)
+                            .listRowBackground(Color.bg)
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                         }
                     }
                     .listStyle(.plain)

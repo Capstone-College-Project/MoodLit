@@ -353,6 +353,7 @@ struct PageView: View {
                 .padding(.top, topPadding)
                 .padding(.bottom, containerH * 0.8)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
                 .coordinateSpace(name: "pageContent")
                 .offset(y: topPadding - scrollOffset)
                 .mask(
@@ -371,14 +372,13 @@ struct PageView: View {
                     }
                 )
 
-                // ── Page marker (display only) ──
-                PageMarkerView(
+            PageMarkerView(
                     markerY: markerY,
                     musicEngine: musicEngine
                 )
             }
             .simultaneousGesture(
-                DragGesture(minimumDistance: 30)
+                DragGesture(minimumDistance: 15)
                     .onChanged { value in
                         guard !tracker.isAutoScrolling else { return }
 
@@ -386,11 +386,23 @@ struct PageView: View {
                         let vertical = abs(value.translation.height)
 
                         if dragDirection == .undecided {
-                            if vertical > horizontal {
-                                dragDirection = .vertical
-                                dragStartOffset = scrollOffset
+                            if scrollOffset > 5 {
+                                // When scrolled down: only treat as horizontal
+                                // if it's VERY clearly horizontal (3x wider than tall)
+                                if horizontal > vertical * 3 {
+                                    dragDirection = .horizontal
+                                } else {
+                                    dragDirection = .vertical
+                                    dragStartOffset = scrollOffset
+                                }
                             } else {
-                                dragDirection = .horizontal
+                                // At the top: normal direction detection
+                                if vertical > horizontal {
+                                    dragDirection = .vertical
+                                    dragStartOffset = scrollOffset
+                                } else {
+                                    dragDirection = .horizontal
+                                }
                             }
                         }
 
