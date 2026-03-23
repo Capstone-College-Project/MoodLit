@@ -10,6 +10,7 @@ import Combine
 class PlaylistStore: ObservableObject {
     @Published var playlists: [Playlist] = []
 
+    
     static let shared = PlaylistStore()
 
     private init() {
