@@ -1,9 +1,11 @@
-//
 //  Library.swift
 //  MoodLit
 //
-//  Created by Anthony Chang Martinez on 3/1/26.
+// Created on 3/1/26.
 //
+//Library View, show list of books that user currently has
+//Allows user to look for books online or upload their own,
+//Allow user to assign a  playlist to book, see the books emotianal map.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -51,6 +53,8 @@ struct Library: View {
             .sheet(isPresented: $showCreateWebNovel) {
                 CreateWebNovelSheet()
             }
+            // Triggers when  user pick a file from  user's device and add it to library
+            //Calls library.importEpub to parse it and add it to library
             .fileImporter(
                 isPresented: $showFilePicker,
                 allowedContentTypes: [.epub],
@@ -74,6 +78,9 @@ struct Library: View {
     }
 
     // MARK: - Top Bar
+    //Shows Title of the view, Allow user  see btn to upload and find Books,
+    //As well as creating webnovels
+    
     @ViewBuilder
     private var topBar: some View {
         HStack {
@@ -115,6 +122,7 @@ struct Library: View {
     }
 
     // MARK: - Book Grid
+    //Shows list of books in grid layout
     private var bookGrid: some View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 20) {
@@ -150,6 +158,7 @@ struct Library: View {
 }
 
 // MARK: - Book Card
+//Show Info about a book in the form aof card layout
 struct BookCard: View {
     let book: Book
     @ObservedObject private var library = LibraryManager.shared
@@ -180,7 +189,7 @@ struct BookCard: View {
                         .padding(6)
                     }
                 }
-
+                //Shows  btns to navigate books properties
                 menuButton
             }
 
@@ -233,6 +242,8 @@ struct BookCard: View {
     }
 
     // MARK: - Cover Image
+    //Show cover image for book depending on  origing of the book:
+    //Upload with Image,URL Image from Free Domain, Or Webnovel
     @ViewBuilder
     private var coverImage: some View {
         Group {
@@ -290,7 +301,7 @@ struct BookCard: View {
     }
 
     // MARK: - Three-dot Menu
-
+    //Menu that allows the user to trigger differnet features for  books
     private var menuButton: some View {
         Menu {
             Button {

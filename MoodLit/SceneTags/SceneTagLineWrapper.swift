@@ -4,19 +4,25 @@
 //
 //  Created by Anthony Chang Martinez on 3/11/26.
 
+//This is a generic view that wraps every single line of text in the reader. It adds three things:
+//a colored left border when inside a tagged region, a badge on the first line of a tag,
+//and tap/long-press gestures to create or edit tags.
+
 import SwiftUI
 
 // MARK: - SceneTagLineWrapper
 
 struct SceneTagLineWrapper<Content: View>: View {
-    let content: Content
-    let page: Int
+    let content: Content  //Text content
+    let page: Int        // page number
+    //Line index from lineStaticY
     let lineIndex: Int
     let sceneTags: [SceneTag]
     let playlist: Playlist?
     let bookID: UUID
     let isTaggingMode: Bool
 
+    //Triggers sheets
     @State private var showCreateEditor = false
     @State private var showEditEditor = false
 
@@ -35,18 +41,22 @@ struct SceneTagLineWrapper<Content: View>: View {
         self.playlist = playlist
         self.bookID = bookID
         self.isTaggingMode = isTaggingMode
+        //lets PageView pass in the text view using trailing closure syntax:
         self.content = content()
     }
 
+    //Checks if the this line has an active tag, by calling SceneTage Engine
     private var activeTag: SceneTag? {
         SceneTagEngine.activeTag(page: page, line: lineIndex, in: sceneTags)
     }
 
+    //Checks which emotionCategory fits the tag gets anme and color
     private var activeCategory: EmotionCategory? {
         guard let tag = activeTag, let playlist else { return nil }
         return playlist.emotions.first { $0.id == tag.emotionCategoryID }
     }
 
+    //Keeps track of where the bage would appear
     private var isTagStart: Bool {
         activeTag?.startLine == lineIndex
     }
@@ -79,6 +89,7 @@ struct SceneTagLineWrapper<Content: View>: View {
             }
 
             // Tagging mode hint — + icon on lines without a tag
+            // Tap to create tag when in tagging mode and line has no existing tag
             if isTaggingMode && activeTag == nil {
                 Image(systemName: "plus.circle")
                     .font(.system(size: 13))
@@ -87,8 +98,9 @@ struct SceneTagLineWrapper<Content: View>: View {
                     .allowsHitTesting(false)
             }
         }
-        // Tap to create tag when in tagging mode and line has no existing tag
+        // makes the entire row tappable, not just the visible text pixels.
         .contentShape(Rectangle())
+        //Calls SceneTagEditor
         .onTapGesture {
             guard isTaggingMode, activeTag == nil else { return }
             showCreateEditor = true
@@ -125,7 +137,7 @@ struct SceneTagLineWrapper<Content: View>: View {
 }
 
 // MARK: - SceneTagBadge
-
+//Bage that shows the  the emtion name,color and intentsity
 struct SceneTagBadge: View {
     let category: EmotionCategory
     let intensityLevel: Int

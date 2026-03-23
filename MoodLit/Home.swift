@@ -2,8 +2,9 @@
 //  Home.swift
 //  MoodLit
 //
-//  Created by Anthony Chang Martinez on 3/8/26.
+//  Created on 3/8/26.
 //
+//Home feature helps user navigate the different features that the app has
 
 import SwiftUI
 
@@ -11,11 +12,11 @@ struct Home: View {
     @ObservedObject private var library = LibraryManager.shared
     @ObservedObject private var settings = ReaderSettings.shared
 
-    // Books sorted by most recently read (any with pageIndex > 0)
+    // Books sorted by most recently read by checking date
     private var readBooks: [Book] {
         library.books
             .filter { $0.readingProgress.pageIndex > 0 }
-            .sorted { $0.readingProgress.pageIndex > $1.readingProgress.pageIndex }
+            .sorted { ($0.lastOpenedDate ?? .distantPast) > ($1.lastOpenedDate ?? .distantPast) }
     }
 
     private var continueReadingBook: Book? {

@@ -1,10 +1,11 @@
+//CreateWebNovelSheet.swift
+//MoodLit
 //
-//  CreateWebNovelSheet.swift
-//  MoodLit
+// Created on 3/14/26.
 //
-//  Created by Anthony Chang Martinez on 3/14/26.
-//
-
+//Allows user to create webnovel book category,
+//User can upload chapters for a webnovel,and assign
+//all regular features a book would have.
 
 import SwiftUI
 
@@ -48,7 +49,7 @@ struct CreateWebNovelSheet: View {
                             Text("Title")
                                 .font(.caption)
                                 .foregroundColor(Color.text2)
-                            TextField("e.g. Solo Leveling", text: $title)
+                            TextField("e.g. Renegade Immmortal", text: $title)
                                 .font(.subheadline)
                                 .foregroundColor(Color.text)
                                 .padding(12)

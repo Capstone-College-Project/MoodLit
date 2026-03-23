@@ -31,6 +31,7 @@ struct Book: Identifiable, Codable {
     var chapters: [Chapter]
     var sceneTags: [SceneTag]
     var assignedPlaylistID: UUID?
+    var lastOpenedDate: Date?
     var readingProgress: ReadingProgress
 
     init(
@@ -44,7 +45,8 @@ struct Book: Identifiable, Codable {
         localEPUBPath: String = "",
         chapters: [Chapter] = [],
         sceneTags: [SceneTag] = [],
-        assignedPlaylistID: UUID? = nil
+        assignedPlaylistID: UUID? = nil,
+        lastOpenedDate: Date? = nil
     ) {
         self.id = id
         self.title = title
@@ -57,7 +59,9 @@ struct Book: Identifiable, Codable {
         self.chapters = chapters
         self.sceneTags = sceneTags
         self.assignedPlaylistID = assignedPlaylistID
+        self.lastOpenedDate = lastOpenedDate
         self.readingProgress = ReadingProgress()
+        
     }
 
     // MARK: - Factory Methods

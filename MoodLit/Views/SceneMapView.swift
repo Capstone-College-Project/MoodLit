@@ -6,10 +6,6 @@
 // Visual overview of all scene tags in a book.
 // Shows emotional fingerprint, timeline, now-playing, and scene list.
 
-
-// SceneMapView.swift
-// MoodLit
-
 import SwiftUI
 
 struct SceneMapView: View {

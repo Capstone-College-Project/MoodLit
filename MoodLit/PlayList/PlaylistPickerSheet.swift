@@ -4,6 +4,8 @@
 //
 //  Created by Anthony Chang Martinez on 3/11/26.
 //
+//Called from Library, BookCard. This feature assigns a playlist to a book
+//it also allows for removing playlist for book
 
 import SwiftUI
 
@@ -32,9 +34,11 @@ struct PlaylistPickerSheet: View {
                             .foregroundColor(Color.text2)
                     }
                 } else {
+                    //Show list of playlist
                     List {
                         ForEach(store.playlists) { playlist in
                             Button {
+                                //Adds Playlist to book,(with playlist id)
                                 library.assignPlaylist(playlist.id, to: book.id)
                                 dismiss()
                             } label: {
@@ -74,6 +78,7 @@ struct PlaylistPickerSheet: View {
                             .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                         }
 
+                        //If Book assigned playlist is not empty, the allow user to remove it
                         if book.assignedPlaylistID != nil {
                             Button {
                                 library.assignPlaylist(nil, to: book.id)

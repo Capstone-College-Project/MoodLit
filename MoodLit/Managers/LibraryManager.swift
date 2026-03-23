@@ -156,6 +156,13 @@ class LibraryManager: ObservableObject {
             print("LibraryManager: load failed — \(error)")
         }
     }
+    
+    func updateLastOpened(for bookID: UUID) {
+        guard let idx = books.firstIndex(where: { $0.id == bookID }) else { return }
+        books[idx].lastOpenedDate = Date()
+        save()
+    }
+    
 }
 
 

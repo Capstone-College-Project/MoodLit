@@ -71,6 +71,7 @@ struct PlaylistNameSheet: View {
 // Used inside PlaylistEditorView to create a custom emotion category.
 
 struct AddCategorySheet: View {
+    //Vars for emotion
     @Binding var name: String
     @Binding var color: Color
     @Binding var intensity1: String
@@ -159,6 +160,7 @@ struct AddCategorySheet: View {
         .onAppear { focused = true }
     }
 
+    //Helper function to help display and show category intensity and description
     private func intensityField(number: String, binding: Binding<String>, placeholder: String) -> some View {
         HStack(spacing: 10) {
             Text(number)

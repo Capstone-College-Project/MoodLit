@@ -3,7 +3,9 @@
 //  MoodLit
 //
 //  Created by Anthony Chang Martinez on 3/8/26.
-
+//Shows which Emotion categories the playlist has,
+//Allows  user to  add music  to the category and intensity
+//Allows to create a new category
 
 import SwiftUI
 
@@ -13,6 +15,7 @@ struct PlaylistEditorView: View {
 
     @StateObject private var store = PlaylistStore.shared
     @State private var expandedID: UUID? = nil
+    //Vars for the creation of new category
     @State private var showAddCategory = false
     @State private var newCategoryName = ""
     @State private var newCategoryColor = Color.gold
@@ -20,6 +23,7 @@ struct PlaylistEditorView: View {
     @State private var newIntensity2 = "Medium intensity"
     @State private var newIntensity3 = "High intensity"
 
+    //gets the correct playlist by ID
     private var playlistIdx: Int? {
         store.playlists.firstIndex(where: { $0.id == playlistID })
     }
@@ -28,19 +32,23 @@ struct PlaylistEditorView: View {
         ZStack {
             Color.bg.ignoresSafeArea()
 
+            //Iterates the emotions categories, changes direcltu affect store.playlists[idx].emotions
             if let idx = playlistIdx {
                 List {
                     ForEach(store.playlists[idx].emotions.indices, id: \.self) { eIdx in
+                        //Guard check to prevent errors when deleting an  category(outbounds)
                         if eIdx < store.playlists[idx].emotions.count {
                             EmotionCategorySection(
                                 emotion: $store.playlists[idx].emotions[eIdx],
                                 isExpanded: expandedID == store.playlists[idx].emotions[eIdx].id,
+                                //Helps collapse or expand by checking id
                                 onTapHeader: {
                                     let id = store.playlists[idx].emotions[eIdx].id
                                     withAnimation(.easeInOut(duration: 0.25)) {
                                         expandedID = expandedID == id ? nil : id
                                     }
                                 },
+                                //Saves modifications
                                 onSave: {
                                     store.save()
                                     onSave()
@@ -52,6 +60,7 @@ struct PlaylistEditorView: View {
                             .listRowBackground(Color.bg)
                             .listRowSeparator(.hidden)
                             .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                            //Deletes a category by swiping
                             .swipeActions(edge: .trailing) {
                                 Button(role: .destructive) {
                                     if expandedID == store.playlists[idx].emotions[eIdx].id {
@@ -66,7 +75,8 @@ struct PlaylistEditorView: View {
                             }
                         }
                     }
-                    
+                    //Button that calls the addCategory sheet to create a new
+                    //emotion Category
                     Button {
                         newCategoryName = ""
                         newCategoryColor = Color.gold
@@ -108,7 +118,9 @@ struct PlaylistEditorView: View {
                 intensity2: $newIntensity2,
                 intensity3: $newIntensity3
             ) {
+                //Checks that Playlist exist
                 guard let idx = playlistIdx else { return }
+                //Creates new struct categoru
                 let cat = EmotionCategory(
                     categoryName: newCategoryName.trimmingCharacters(in: .whitespaces),
                     colorHex: newCategoryColor.toHex() ?? "#888888",
@@ -117,9 +129,12 @@ struct PlaylistEditorView: View {
                     intensity3: Intensity(nameDescription: newIntensity3)
                 )
                 store.playlists[idx].emotions.append(cat)
+                //Persist Changes
                 store.save()
                 onSave()
                 showAddCategory = false
+                //Delays dismiss to avoid visual glitches, when dismissing sheet and,
+                //adding animation to display new category
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                     withAnimation(.easeInOut(duration: 0.25)) {
                         expandedID = cat.id

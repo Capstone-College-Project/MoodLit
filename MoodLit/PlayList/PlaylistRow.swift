@@ -3,11 +3,7 @@
 //  MoodLit
 //
 //  Created by Anthony Chang Martinez on 3/8/26.
-//
-
-
-// PlaylistRow.swift
-// MoodLit
+// Display information of the playlist to the screen
 
 import SwiftUI
 
@@ -29,7 +25,7 @@ struct PlaylistRow: View {
     
 
     // MARK: - Icon
-
+    //Shows an icon with dots related to emtions
     private var icon: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 10)
@@ -59,7 +55,7 @@ struct PlaylistRow: View {
     }
 
     // MARK: - Info
-
+    //Shows the number of tracks and and the emetions they cover
     private var info: some View {
         let filledCount = playlist.emotions.filter { $0.hasAnyTrack }.count
         let subtitle = playlist.totalTracks == 0

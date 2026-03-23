@@ -3,6 +3,11 @@
 //  MoodLit
 //
 //  Created by Anthony Chang Martinez on 3/11/26.
+
+//appears when creating or editing a scene tag. It lets the user pick an emotion category,
+//set intensity, adjust the line range, and optionally override the music track.
+
+
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -43,10 +48,12 @@ struct SceneTagEditorSheet: View {
         _musicOverride = State(initialValue: existingTag?.musicOverride)
     }
 
+    //Selects an emtion according to id of the selectedCategory by user
     private var selectedCategory: EmotionCategory? {
         playlist.emotions.first { $0.id == selectedCategoryID }
     }
 
+    //Returns the track assigned to that categiry
     private var playlistTrack: MusicFile? {
         guard let cat = selectedCategory else { return nil }
         switch selectedIntensity {
@@ -56,6 +63,7 @@ struct SceneTagEditorSheet: View {
         }
     }
 
+    //Shows a description for the intensity
     private var intensityDescription: String {
         guard let cat = selectedCategory else { return "" }
         switch selectedIntensity {
@@ -65,6 +73,7 @@ struct SceneTagEditorSheet: View {
         }
     }
 
+    //Save is disabled until a selection is made
     private var canSave: Bool { selectedCategoryID != nil }
 
     var body: some View {
@@ -121,7 +130,7 @@ struct SceneTagEditorSheet: View {
     }
 
     // MARK: - Location
-
+    //User can see the starting line and end of the page, and increment or decrease the line
     private var locationSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             sectionHeader("Location")
@@ -157,7 +166,8 @@ struct SceneTagEditorSheet: View {
     }
 
     // MARK: - Emotion
-
+    //Displays list of all categories
+    //allows user to select one
     private var emotionSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeader("Emotion")
@@ -215,7 +225,7 @@ struct SceneTagEditorSheet: View {
     }
 
     // MARK: - Intensity
-
+    //Lets user pick  intensity for scene
     private var intensitySection: some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeader("Intensity")
@@ -266,7 +276,9 @@ struct SceneTagEditorSheet: View {
     }
 
     // MARK: - Music
-
+    //Allows user to see which track user is selecting
+    //If user can override current track or assing track if
+    //no music is has been assign to this intensity
     private var musicSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeader("Music")
@@ -355,7 +367,10 @@ struct SceneTagEditorSheet: View {
             .font(.subheadline.weight(.semibold))
             .foregroundColor(Color.text2)
     }
+    
 
+    //Creates a Scene Tag, and save its, which is an old tag the id remains the same
+    //new tag a new id is created
     private func save() {
         guard let categoryID = selectedCategoryID else { return }
         let tag = SceneTag(
@@ -371,6 +386,7 @@ struct SceneTagEditorSheet: View {
         dismiss()
     }
 
+    //Helps import Music from File for Music Override feature.
     private func handleFilePick(_ result: Result<[URL], Error>) {
         guard case .success(let urls) = result, let url = urls.first else { return }
         guard url.startAccessingSecurityScopedResource() else { return }
