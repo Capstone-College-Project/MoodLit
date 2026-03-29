@@ -180,9 +180,11 @@ struct BookReaderView: View {
             tracker.isAutoScrolling = false
             musicEngine.stop()
         }
-        .onChange(of: book?.sceneTags.count) { oldValue, newValue in
+        .onChange(of: book?.sceneTags) { oldValue, newValue in
             guard let book, let playlist else { return }
             musicEngine.load(sceneTags: book.sceneTags, playlist: playlist)
+            // Force re-evaluation on the current line so the new track plays immediately
+            musicEngine.onLineChanged(page: tracker.activePage, line: tracker.activeLine)
         }
     }
 
@@ -799,10 +801,22 @@ struct ChapterListView: View {
     @Binding var currentPageIndex: Int
     @Environment(\.dismiss) private var dismiss
 
+    // Compute which chapter the current page belongs to
+    private var currentChapterID: UUID? {
+        let pages = book.allPages
+        guard currentPageIndex < pages.count else { return nil }
+        let pageNumber = pages[currentPageIndex].number
+        return book.chapters.first {
+            $0.pages.contains(where: { $0.number == pageNumber })
+        }?.id
+    }
+
     var body: some View {
         NavigationStack {
             List {
                 ForEach(book.chapters) { chapter in
+                    let isCurrent = chapter.id == currentChapterID
+
                     Button {
                         if let firstPage = chapter.pages.first,
                            let index = book.allPages.firstIndex(where: { $0.id == firstPage.id }) {
@@ -810,18 +824,41 @@ struct ChapterListView: View {
                         }
                         dismiss()
                     } label: {
-                        HStack {
-                            Text(chapter.title).foregroundColor(Color.text)
+                        HStack(spacing: 12) {
+                            // Active indicator bar
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(isCurrent ? Color.gold : Color.clear)
+                                .frame(width: 3, height: 20)
+
+                            Text(chapter.title)
+                                .foregroundColor(isCurrent ? Color.gold : Color.text)
+                                .fontWeight(isCurrent ? .semibold : .regular)
+
                             Spacer()
-                            Image(systemName: "chevron.right").font(.caption).foregroundColor(Color.text2)
+
+                            if isCurrent {
+                                Text("Current")
+                                    .font(.caption2)
+                                    .foregroundColor(Color.gold)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(Color.gold.opacity(0.12))
+                                    .cornerRadius(6)
+                            }
+
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundColor(Color.text2)
                         }
                     }
-                    .listRowBackground(Color.surface)
+                    .listRowBackground(
+                        isCurrent ? Color.gold.opacity(0.08) : Color.surface
+                    )
                 }
             }
-            .listStyle(.plain)
-            .background(Color.bg)
+            .listStyle(.insetGrouped)       // fixes first row clipping
             .scrollContentBackground(.hidden)
+            .background(Color.bg)
             .navigationTitle("Chapters")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

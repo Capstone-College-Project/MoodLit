@@ -130,7 +130,12 @@ struct SceneTagEditorSheet: View {
     }
 
     // MARK: - Location
-    //User can see the starting line and end of the page, and increment or decrease the line
+
+    // Add this computed property alongside your other ones
+    private var expandedCount: Int {
+        editedEndLine - endLine
+    }
+
     private var locationSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             sectionHeader("Location")
@@ -162,6 +167,34 @@ struct SceneTagEditorSheet: View {
             .padding(14)
             .background(Color.surface)
             .cornerRadius(12)
+
+            // Line counter
+            HStack(spacing: 12) {
+                HStack(spacing: 6) {
+                    Image(systemName: "text.line.last.and.arrowtriangle.forward")
+                        .font(.system(size: 11))
+                        .foregroundColor(Color.text2)
+                    Text("\(editedEndLine - startLine) lines selected")
+                        .font(.caption)
+                        .foregroundColor(Color.text2)
+                }
+
+                if expandedCount > 0 {
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 10))
+                            .foregroundColor(Color.gold)
+                        Text("\(expandedCount) expanded")
+                            .font(.caption.weight(.medium))
+                            .foregroundColor(Color.gold)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.gold.opacity(0.12))
+                    .cornerRadius(6)
+                }
+            }
+            .padding(.horizontal, 4)
         }
     }
 

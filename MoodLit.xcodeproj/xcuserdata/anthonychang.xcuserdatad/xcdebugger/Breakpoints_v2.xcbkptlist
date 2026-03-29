@@ -3,4 +3,22 @@
    uuid = "1ABA4DA1-1969-4190-9C0F-BF1AF6EEEFDE"
    type = "1"
    version = "2.0">
+   <Breakpoints>
+      <BreakpointProxy
+         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
+         <BreakpointContent
+            uuid = "EE937DB7-2E11-46A9-84DD-ED35775E057D"
+            shouldBeEnabled = "Yes"
+            ignoreCount = "0"
+            continueAfterRunningActions = "No"
+            filePath = "MoodLit/Views/SceneMapView.swift"
+            startingColumnNumber = "30"
+            endingColumnNumber = "30"
+            startingLineNumber = "178"
+            endingLineNumber = "178"
+            landmarkName = "currentChapterIndex(book:)"
+            landmarkType = "7">
+         </BreakpointContent>
+      </BreakpointProxy>
+   </Breakpoints>
 </Bucket>

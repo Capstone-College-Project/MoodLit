@@ -184,7 +184,7 @@ struct Intensity: Identifiable, Codable {
 
 // MARK: - MusicFile
 
-struct MusicFile: Identifiable, Codable {
+struct MusicFile: Identifiable, Codable, Equatable {
     let id: UUID
     var title: String       // display name — user can rename
     var fileName: String    // actual filename stored in Documents/Music/

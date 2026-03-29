@@ -149,7 +149,7 @@ struct BookPage: Identifiable, Codable {
 
 // MARK: - SceneTag
 
-struct SceneTag: Identifiable, Codable {
+struct SceneTag: Identifiable, Codable,Equatable {
     let id: UUID
     let page: Int
     let startLine: Int

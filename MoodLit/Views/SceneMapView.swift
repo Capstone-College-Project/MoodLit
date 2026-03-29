@@ -18,21 +18,28 @@ struct SceneMapView: View {
     @State private var swapTag: SceneTag? = nil
     @State private var navigateToBook: Bool = false
 
+    //gets book to display
     private var book: Book? {
         library.books.first { $0.id == bookID }
     }
 
+    //Searhces for playlist assigned to book and gets its data
     private var playlist: Playlist? {
         guard let pid = book?.assignedPlaylistID else { return nil }
         return playlistStore.playlists.first { $0.id == pid }
     }
 
+    //Sorts all scenes by page, then by start line
+    //used to arrage every display of sceneTags on View
     private var sortedTags: [SceneTag] {
         book?.sceneTags.sorted { a, b in
             a.page != b.page ? a.page < b.page : a.startLine < b.startLine
         } ?? []
     }
-
+    
+    //Gets the current Scene that user is Reading and Progress
+    //If user is in  TimeLine, then this gets the current scene and higlights
+    //the bar, same use when user selects a scene in All Scenes section
     private var currentSceneIndex: Int? {
         guard let book else { return nil }
         let currentPage = book.allPages[safe: book.readingProgress.pageIndex]?.number ?? 0
@@ -44,6 +51,7 @@ struct SceneMapView: View {
         }
     }
 
+    //Body of the View that Displays All Features of this View
     var body: some View {
         NavigationStack {
             ZStack {
@@ -72,9 +80,11 @@ struct SceneMapView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Color.bg, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
+            //Allows user to swap tracks in All Scenes
             .sheet(item: $swapTag) { tag in
                 TrackSwapSheet(bookID: bookID, tag: tag, playlist: playlist)
             }
+            //Fast travel to an specific scene in the book
             .navigationDestination(isPresented: $navigateToBook) {
                 if let book {
                     BookReaderView(book: book)
@@ -84,7 +94,9 @@ struct SceneMapView: View {
     }
 
     // MARK: - Navigate to Scene
-
+    //Finds page tag page number, updates pageIndex and lineIndex in readingProgress,
+    //BookReaderView.setup() runs, it reads pageIndex to set the TabView page and sets
+    //tracker.targetLine from lineIndex so PageView scrolls to the exact line.
     private func goToScene(tag: SceneTag) {
         guard let book else { return }
         // Find the page index for this tag's page number
@@ -98,9 +110,11 @@ struct SceneMapView: View {
     }
 
     // MARK: - Book Info Card
-
+    //View That Displays Info of the book and user progress
     private func bookInfoCard(book: Book) -> some View {
         HStack(spacing: 14) {
+            //Displays Cover image according to the origins of the book:
+            //User's upload, free domain, or webnovel
             Group {
                 if let data = book.coverImageData, let uiImage = UIImage(data: data) {
                     Image(uiImage: uiImage)
@@ -155,6 +169,8 @@ struct SceneMapView: View {
         .cornerRadius(14)
     }
 
+    //Gets the current Chapter that the user is reading,
+    //Searches the page by comparing each chapters page wtih current page from Progress
     private func currentChapterIndex(book: Book) -> Int {
         let pageIndex = book.readingProgress.pageIndex
         guard let currentPage = book.allPages[safe: pageIndex] else { return 1 }
@@ -167,7 +183,8 @@ struct SceneMapView: View {
     }
 
     // MARK: - Emotional Fingerprint
-
+    //Show the emotioal distribution of all scenes
+    //Basically if an emotions appears in 30% of the book this section will display it
     private var emotionalFingerprint: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("EMOTIONAL FINGERPRINT")
@@ -175,6 +192,7 @@ struct SceneMapView: View {
                 .foregroundColor(Color.text2)
                 .tracking(1)
 
+            //Get orderly list of categories
             let stats = emotionStats()
 
             GeometryReader { geo in
@@ -221,20 +239,26 @@ struct SceneMapView: View {
     }
 
     // MARK: - Emotion Timeline
-
+    //Displays the emotions in sections according to how much they appear in the book,
+    // each scene is an indivdual verical bar, User can tap bar to directly to that scene tag in book
     private var emotionTimeline: some View {
         VStack(spacing: 0) {
             GeometryReader { geo in
+                //Assigns  width to bar  evenly
+                //(totalwidth - gaps/ bar count)
                 let barWidth = max(4, (geo.size.width - CGFloat(sortedTags.count - 1) * 2) / CGFloat(max(sortedTags.count, 1)))
 
+                
                 HStack(alignment: .bottom, spacing: 2) {
                     ForEach(Array(sortedTags.enumerated()), id: \.element.id) { idx, tag in
                         if let category = resolveCategory(tag.emotionCategoryID) {
+                            //get height by calculating intensity level
                             let height = CGFloat(tag.intensityLevel) / 3.0
                             let isCurrentScene = idx == currentSceneIndex
 
                             RoundedRectangle(cornerRadius: 3)
                                 .fill(category.color.opacity(isCurrentScene ? 1.0 : 0.7))
+                                //Assigns a height to bar according to the intensity level
                                 .frame(width: barWidth, height: 20 + height * 60)
                                 .overlay(
                                     isCurrentScene ?
@@ -242,6 +266,7 @@ struct SceneMapView: View {
                                         .stroke(Color.gold, lineWidth: 2) : nil
                                 )
                                 .onTapGesture {
+                                    //Direclty takes you to the scene that user is taps
                                     goToScene(tag: tag)
                                 }
                         }
@@ -257,7 +282,9 @@ struct SceneMapView: View {
     }
 
     // MARK: - Now Playing Card
-
+    //Displays a music track and its information
+    // it shows when user selects an scene in scene map, from
+    // all scenes or emtional timeline
     @ViewBuilder
     private var nowPlayingCard: some View {
         if let idx = currentSceneIndex {
@@ -281,19 +308,6 @@ struct SceneMapView: View {
                         .foregroundColor(Color.text2)
                 }
 
-                Spacer()
-
-                HStack(spacing: 16) {
-                    Image(systemName: "backward.fill")
-                        .font(.system(size: 14))
-                        .foregroundColor(Color.text2)
-                    Image(systemName: "pause.fill")
-                        .font(.system(size: 16))
-                        .foregroundColor(Color.text)
-                    Image(systemName: "forward.fill")
-                        .font(.system(size: 14))
-                        .foregroundColor(Color.text2)
-                }
             }
             .padding(14)
             .background(Color.surface)
@@ -302,14 +316,15 @@ struct SceneMapView: View {
     }
 
     // MARK: - All Scenes
-
+    //Shows a list of All scene  tags in the book
     private var allScenesSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("ALL SCENES")
                 .font(.caption.weight(.semibold))
                 .foregroundColor(Color.text2)
                 .tracking(1)
-
+            
+            //fetch list of scene tags displays it
             ForEach(Array(sortedTags.enumerated()), id: \.element.id) { idx, tag in
                 sceneRow(tag: tag, index: idx)
             }
@@ -333,6 +348,8 @@ struct SceneMapView: View {
         }
     }
 
+    //Helper function to display info regarding each scene and navigate to that
+    //specific scene in the book
     private func sceneRow(tag: SceneTag, index: Int) -> some View {
         let category = resolveCategory(tag.emotionCategoryID)
         let track = resolveTrack(for: tag)
@@ -397,7 +414,8 @@ struct SceneMapView: View {
                     .font(.caption)
                     .foregroundColor(Color.text2)
                     .lineLimit(1)
-
+                
+                //Button to swap track with another one
                 Button {
                     swapTag = tag
                 } label: {
@@ -430,11 +448,12 @@ struct SceneMapView: View {
     }
 
     // MARK: - Helpers
-
+    //Gets an emotion categroy by Id
     private func resolveCategory(_ categoryID: UUID) -> EmotionCategory? {
         playlist?.emotions.first { $0.id == categoryID }
     }
 
+    //Checks for an overide music, otherwise get music from playlist
     private func resolveTrack(for tag: SceneTag) -> MusicFile? {
         if let override = tag.musicOverride { return override }
         guard let category = resolveCategory(tag.emotionCategoryID) else { return nil }
@@ -444,7 +463,8 @@ struct SceneMapView: View {
         default: return category.intensity3.music
         }
     }
-
+    //Helper function that creates a title for the scene.
+    //It picks the first line in scene and  picks it as title
     private func sceneTitle(for tag: SceneTag) -> String {
         guard let book else { return "Scene" }
         if let page = book.allPages.first(where: { $0.number == tag.page }) {
@@ -462,11 +482,15 @@ struct SceneMapView: View {
         return "Page \(tag.page), Line \(tag.startLine)"
     }
 
+    //Stores emotion id and the percentage that the emotion appears in
+    // the book in respect to the others
     private struct EmotionStat {
         let categoryID: UUID
         let percent: Double
     }
 
+    //Helps Count the categories and find which ones have the largest presence in the book
+    // Returns array if EmotionStats
     private func emotionStats() -> [EmotionStat] {
         guard !sortedTags.isEmpty else { return [] }
         var counts: [UUID: Int] = [:]
@@ -481,6 +505,8 @@ struct SceneMapView: View {
 
 // MARK: - Safe Array Access
 
+//Helps Prevents Out out bound errors by returning nil if
+//an element is not in the array
 extension Array {
     subscript(safe index: Index) -> Element? {
         indices.contains(index) ? self[index] : nil
