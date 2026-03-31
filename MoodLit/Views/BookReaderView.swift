@@ -44,6 +44,9 @@ struct BookReaderView: View {
     @State private var showChapterList = false
     @State private var showReaderSettings = false
     @State private var isTaggingMode: Bool = false
+    @State private var isAnalyzingAI: Bool = false
+    @State private var aiErrorMessage: String? = nil
+    @State private var aiSuccessMessage: String? = nil
 
     init(book: Book) {
         self.bookID = book.id
@@ -136,10 +139,27 @@ struct BookReaderView: View {
         .preferredColorScheme(settings.colorScheme == .dark ? .dark : .light)
         .navigationBarTitleDisplayMode(.inline)
         .navigationTitle(book?.title ?? "")
+        
+        
+        //Btn to use the different features to read,navigate or edit book.
         .toolbar {
-            //Btn to use the different features to read,navigate or edit book.
             ToolbarItem(placement: .navigationBarTrailing) {
                 HStack(spacing: 4) {
+                    Button {
+                        Task {
+                            await analyzeBookWithAI()
+                        }
+                    } label: {
+                        if isAnalyzingAI {
+                            ProgressView()
+                                .tint(Color.gold)
+                        } else {
+                            Image(systemName: "sparkles")
+                                .foregroundColor(Color.text2)
+                        }
+                    }
+                    .disabled(isAnalyzingAI)
+
                     Button {
                         isTaggingMode.toggle()
                     } label: {
@@ -150,12 +170,16 @@ struct BookReaderView: View {
                     Button { showChapterList = true } label: {
                         Image(systemName: "list.bullet").foregroundColor(Color.text2)
                     }
+
                     Button { showReaderSettings = true } label: {
                         Image(systemName: "textformat").foregroundColor(Color.text2)
                     }
                 }
             }
-        }//Shows a list of all chapters the book has
+        }
+
+        
+        //Shows a list of all chapters the book has
         .sheet(isPresented: $showChapterList) {
             if let book { ChapterListView(book: book, currentPageIndex: $currentPageIndex) }
         }//Allows User to change  the  reding settings
@@ -185,6 +209,22 @@ struct BookReaderView: View {
             musicEngine.load(sceneTags: book.sceneTags, playlist: playlist)
             // Force re-evaluation on the current line so the new track plays immediately
             musicEngine.onLineChanged(page: tracker.activePage, line: tracker.activeLine)
+        }
+        .alert("AI Analysis Error", isPresented: Binding(
+            get: { aiErrorMessage != nil },
+            set: { if !$0 { aiErrorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { aiErrorMessage = nil }
+        } message: {
+            Text(aiErrorMessage ?? "Unknown error")
+        }
+        .alert("AI Tagging Complete", isPresented: Binding(
+            get: { aiSuccessMessage != nil },
+            set: { if !$0 { aiSuccessMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { aiSuccessMessage = nil }
+        } message: {
+            Text(aiSuccessMessage ?? "")
         }
     }
 
@@ -229,7 +269,13 @@ struct BookReaderView: View {
                 Text("Page \(currentPageIndex + 1) of \(pages.count)")
                     .font(.caption2)
                     .foregroundColor(Color.text2)
+
+                Text("• \(tagCountForCurrentPage()) tag(s)")
+                    .font(.caption2)
+                    .foregroundColor(Color.gold)
+
                 Spacer()
+
                 if let title = currentChapterTitle(pages: pages) {
                     Text(title)
                         .font(.caption2)
@@ -318,6 +364,45 @@ struct BookReaderView: View {
             print("❌ Parse error: \(error.localizedDescription)")
         }
     }
+    @MainActor
+    private func analyzeBookWithAI() async {
+        guard let book else {
+            aiErrorMessage = "Book not found."
+            return
+        }
+
+        guard let playlist else {
+            aiErrorMessage = "Please assign a playlist to this book before using AI tagging."
+            return
+        }
+
+        isAnalyzingAI = true
+        aiErrorMessage = nil
+        aiSuccessMessage = nil
+        defer { isAnalyzingAI = false }
+
+        do {
+            let analyzer = BookAIAnalyzer()
+            try await analyzer.analyze(
+                book: book,
+                playlist: playlist,
+                startPageIndex: currentPageIndex
+            )
+            aiSuccessMessage = "AI tagging finished successfully."
+            print("✅ AI analysis completed for \(book.title)")
+        } catch {
+            aiErrorMessage = error.localizedDescription
+            print("❌ AI analysis failed: \(error.localizedDescription)")
+        }
+    }
+    private func tagCountForCurrentPage() -> Int {
+        guard let book else { return 0 }
+        let pages = book.allPages
+        guard currentPageIndex < pages.count else { return 0 }
+
+        let currentPageNumber = pages[currentPageIndex].number
+        return book.sceneTags.filter { $0.page == currentPageNumber }.count
+    }
 }
 
 // MARK: - PageView
@@ -347,6 +432,8 @@ struct PageView: View {
     @State private var dragDirection: DragDirection = .undecided
     //Prevents line jumps form firing more than once
     @State private var hasScrolledToTarget: Bool = false
+    
+    
 
     private enum DragDirection {
         case undecided, vertical, horizontal
