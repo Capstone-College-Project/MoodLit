@@ -16,9 +16,7 @@ import Combine
 class AuthService: ObservableObject {
     static let shared = AuthService()
 
-    // Change this to your actual server URL
-    // Use your machine's local IP for simulator (not localhost)
-    private let baseURL = "http://192.168.40.5:8080/api/auth"
+    private let baseURL = "https://moodlit-api-production.up.railway.app/api/auth"
 
     @Published var currentUser: UserDTO? = nil
     @Published var isAuthenticated: Bool = false
