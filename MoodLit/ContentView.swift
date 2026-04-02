@@ -8,8 +8,17 @@
 import SwiftUI
 
 struct ContentView: View {
+    @ObservedObject var auth = AuthService.shared
+
     var body: some View {
-        Home()
+        NavigationStack {
+            if auth.isAuthenticated {
+                Home()
+            } else {
+                WelcomeScreen()
+            }
+        }
+        .id(auth.isAuthenticated) 
     }
 }
 

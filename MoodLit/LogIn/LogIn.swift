@@ -11,6 +11,7 @@ struct LogIn: View {
     
     @State var userEmail: String = ""
     @State var userPassword: String = ""
+    @State private var showPassword: Bool = false
     @State private var navigateToHome: Bool = false
     @ObservedObject var auth = AuthService.shared
     
@@ -41,8 +42,68 @@ struct LogIn: View {
                     .padding()
                 
                 VStack {
-                    userDetails(title: "Email", userInput: $userEmail)
-                    userDetails(title: "Password", userInput: $userPassword)
+                    VStack(alignment: .leading) {
+                        Text("Email")
+                            .font(.headline)
+                            .foregroundColor(Color.text.opacity(0.4))
+                        
+                        TextField("Enter your Email", text: $userEmail)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .keyboardType(.emailAddress)
+                            .onChange(of: userEmail) { _, newValue in
+                                let lowered = newValue.lowercased()
+                                if lowered != newValue {
+                                    userEmail = lowered
+                                }
+                            }
+                            .padding(12)
+                            .background(Color.yellow.opacity(0.2))
+                            .cornerRadius(10)
+                            .foregroundColor(Color.white)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.gold, lineWidth: 1)
+                            }
+                            .textFieldStyle(PlainTextFieldStyle())
+                    }
+                    .padding(5)
+                    
+                    // Password field — hidden with toggle
+                    VStack(alignment: .leading) {
+                        Text("Password")
+                            .font(.headline)
+                            .foregroundColor(Color.text.opacity(0.4))
+                        
+                        HStack {
+                            if showPassword {
+                                TextField("Enter your Password", text: $userPassword)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                            } else {
+                                SecureField("Enter your Password", text: $userPassword)
+                                    .textInputAutocapitalization(.never)
+                            }
+                            
+                            Button {
+                                showPassword.toggle()
+                            } label: {
+                                Image(systemName: showPassword ? "eye.slash" : "eye")
+                                    .foregroundColor(Color.text.opacity(0.4))
+                                    .font(.system(size: 14))
+                            }
+                        }
+                        .padding(12)
+                        .background(Color.yellow.opacity(0.2))
+                        .cornerRadius(10)
+                        .foregroundColor(Color.white)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.gold, lineWidth: 1)
+                        }
+                        .textFieldStyle(PlainTextFieldStyle())
+                    }
+                    .padding(5)
                     
                     NavigationLink(destination: ForgotPassword()) {
                         Text("Forgot Password?")
@@ -52,7 +113,6 @@ struct LogIn: View {
                 }
                 .padding()
                 
-                // Error message
                 if let error = auth.errorMessage {
                     Text(error)
                         .font(.caption)
@@ -60,7 +120,6 @@ struct LogIn: View {
                         .padding(.horizontal, 20)
                 }
                 
-                // Log In button
                 Button {
                     Task {
                         let success = await auth.logIn(
@@ -93,7 +152,6 @@ struct LogIn: View {
                     .background(Color.text)
                     .padding()
                 
-                // Apple Sign In
                 AppleSignInButton(onSuccess: {
                     navigateToHome = true
                 })

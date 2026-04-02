@@ -44,7 +44,7 @@ struct WelcomeScreen: View {
                         presentInfo(icon: "theatermasks", description: "AI powered scene and mood tagging for each page" )
                             .padding(.bottom,10)
                         
-                        presentInfo(icon: "book", description: "Create Playlist and tags specefically for each book")
+                        presentInfo(icon: "book", description: "Create Playlist and tags specifically for each book")
                             .padding(.bottom,10)
                         
                     }

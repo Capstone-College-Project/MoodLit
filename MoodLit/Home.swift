@@ -28,39 +28,33 @@ struct Home: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                Color.bg.ignoresSafeArea()
+        ZStack {
+            Color.bg.ignoresSafeArea()
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
 
-                        // Welcome
-                        welcomeSection
-                            .padding(.top, 8)
+                    welcomeSection
+                        .padding(.top, 8)
 
-                        // Continue Reading
-                        if let book = continueReadingBook {
-                            continueReadingCard(book: book)
-                        }
-
-                        // Navigation buttons
-                        navButtons
-
-                        // Recent Books
-                        if !recentBooks.isEmpty {
-                            recentBooksSection
-                        }
-
-                        Spacer(minLength: 40)
+                    if let book = continueReadingBook {
+                        continueReadingCard(book: book)
                     }
-                    .padding(.horizontal, 20)
-                }
-            }
-            .navigationBarHidden(true)
-        }
-    }
 
+                    navButtons
+
+                    if !recentBooks.isEmpty {
+                        recentBooksSection
+                    }
+
+                    Spacer(minLength: 40)
+                }
+                .padding(.horizontal, 20)
+            }
+        }
+        .navigationBarHidden(true)
+    }
+    
     // MARK: - Welcome
 
     private var welcomeSection: some View {
@@ -305,6 +299,7 @@ struct Home: View {
 
 struct SettingsView: View {
     @ObservedObject private var settings = ReaderSettings.shared
+    @ObservedObject private var auth = AuthService.shared
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -312,19 +307,67 @@ struct SettingsView: View {
             Color.bg.ignoresSafeArea()
 
             VStack(spacing: 20) {
-                Text("Settings")
-                    .font(.headline)
-                    .foregroundColor(Color.text)
-                Text("Coming soon.")
+                Spacer()
+
+                // User info
+                if let user = auth.currentUser {
+                    VStack(spacing: 8) {
+                        Image(systemName: "person.circle.fill")
+                            .font(.system(size: 50))
+                            .foregroundColor(Color.gold)
+
+                        Text(user.fullName)
+                            .font(.headline)
+                            .foregroundColor(Color.text)
+
+                        Text(user.email)
+                            .font(.caption)
+                            .foregroundColor(Color.text2)
+
+                        Text(user.authProvider)
+                            .font(.caption2)
+                            .foregroundColor(Color.gold)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(Color.gold.opacity(0.12))
+                            .cornerRadius(6)
+                    }
+                    .padding(.bottom, 30)
+                }
+
+                Text("More settings coming soon.")
                     .font(.subheadline)
                     .foregroundColor(Color.text2)
+
+                Spacer()
+
+                // Log Out button
+                Button {
+                    auth.logOut()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "rectangle.portrait.and.arrow.right")
+                        Text("Log Out")
+                    }
+                    .font(.headline)
+                    .foregroundColor(.red)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 52)
+                    .background(Color.red.opacity(0.1))
+                    .cornerRadius(14)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14)
+                            .stroke(Color.red.opacity(0.3), lineWidth: 1)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 40)
             }
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
-
 #Preview {
     Home()
 }

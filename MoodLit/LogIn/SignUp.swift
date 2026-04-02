@@ -159,6 +159,9 @@ struct userDetails: View {
                         .stroke(Color.gold, lineWidth: 1)
                 }
                 .textFieldStyle(PlainTextFieldStyle())
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .keyboardType(.emailAddress)
                 
         }
         
