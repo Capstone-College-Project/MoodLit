@@ -33,6 +33,7 @@ struct Book: Identifiable, Codable {
     var assignedPlaylistID: UUID?
     var lastOpenedDate: Date?
     var readingProgress: ReadingProgress
+    var aiContext: String  // rolling AI summary
 
     init(
         id: UUID = UUID(),
@@ -46,7 +47,8 @@ struct Book: Identifiable, Codable {
         chapters: [Chapter] = [],
         sceneTags: [SceneTag] = [],
         assignedPlaylistID: UUID? = nil,
-        lastOpenedDate: Date? = nil
+        lastOpenedDate: Date? = nil,
+        aiContext: String = ""
     ) {
         self.id = id
         self.title = title
@@ -61,7 +63,7 @@ struct Book: Identifiable, Codable {
         self.assignedPlaylistID = assignedPlaylistID
         self.lastOpenedDate = lastOpenedDate
         self.readingProgress = ReadingProgress()
-        
+        self.aiContext = aiContext
     }
 
     // MARK: - Factory Methods
@@ -117,6 +119,32 @@ struct Book: Identifiable, Codable {
     }
 
     var isWebNovel: Bool { bookType == .webNovel }
+
+    // MARK: - Custom Decoding
+    
+    enum CodingKeys: String, CodingKey {
+        case id, title, author, coverURL, coverImageData, source, bookType
+        case localEPUBPath, chapters, sceneTags, assignedPlaylistID
+        case lastOpenedDate, readingProgress, aiContext
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        author = try container.decode(String.self, forKey: .author)
+        coverURL = try container.decodeIfPresent(String.self, forKey: .coverURL)
+        coverImageData = try container.decodeIfPresent(Data.self, forKey: .coverImageData)
+        source = try container.decode(BookSource.self, forKey: .source)
+        bookType = try container.decode(BookType.self, forKey: .bookType)
+        localEPUBPath = try container.decode(String.self, forKey: .localEPUBPath)
+        chapters = try container.decode([Chapter].self, forKey: .chapters)
+        sceneTags = try container.decode([SceneTag].self, forKey: .sceneTags)
+        assignedPlaylistID = try container.decodeIfPresent(UUID.self, forKey: .assignedPlaylistID)
+        lastOpenedDate = try container.decodeIfPresent(Date.self, forKey: .lastOpenedDate)
+        readingProgress = try container.decode(ReadingProgress.self, forKey: .readingProgress)
+        aiContext = try container.decodeIfPresent(String.self, forKey: .aiContext) ?? ""
+    }
 }
 
 // MARK: - Chapter

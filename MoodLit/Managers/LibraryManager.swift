@@ -163,6 +163,13 @@ class LibraryManager: ObservableObject {
         save()
     }
     
+    func updateAIContext(for bookID: UUID, context: String) {
+        if let idx = books.firstIndex(where: { $0.id == bookID }) {
+            books[idx].aiContext = context
+            save()
+        }
+    }
+    
 }
 
 

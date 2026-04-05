@@ -79,7 +79,7 @@ final class OllamaService {
 
     // Simulator usually works with localhost.
     // For a real iPhone later, replace with your Mac's local IP.
-    private let endpoint = URL(string: "http://127.0.0.1:11434/api/generate")!
+    private let endpoint = URL(string: "http://192.168.40.5:11434/api/generate")!
 
     private init() {}
 
@@ -89,11 +89,13 @@ final class OllamaService {
     func analyzePage(
         page: BookPage,
         playlist: Playlist,
+        context: String = "",
         model: String = "llama3.2"
     ) async throws -> AITagResponse {
         try await analyzePages(
             pages: [page],
             playlist: playlist,
+            context: context,
             model: model
         )
     }
@@ -103,12 +105,12 @@ final class OllamaService {
     func analyzePages(
         pages: [BookPage],
         playlist: Playlist,
+        context: String = "",
         model: String = "llama3.2"
     ) async throws -> AITagResponse {
 
         let allowedCategories = playlist.emotions.map { $0.categoryName }
 
-        // Build the page block text using page INDEXES, not page.number
         let pageBlockText = pages.map { page in
             let numberedLines = page.lines.enumerated().map { lineOffset, line in
                 "\(lineOffset): \(line)"
@@ -116,40 +118,99 @@ final class OllamaService {
 
             return """
             PAGE_NUMBER: \(page.number)
+            TOTAL_LINES: \(page.lines.count) (line 0 to \(page.lines.count - 1))
             \(numberedLines)
             """
         }.joined(separator: "\n\n")
 
         let systemPrompt = """
-        You are an AI scene tagger for a reading-and-music app.
+        You are an AI scene tagger for a reading-and-music app. Your job is to assign emotional music categories to sections of story text so that background music matches what the READER FEELS while reading.
 
-        Your job:
-        - Read the provided pages carefully
-        - Detect emotional segments in the story
-        - Use exactly one categoryName from the allowed list
-        - Use exactly one intensityLevel: 1, 2, or 3
-        - Use PAGE_NUMBER exactly as the page field in the JSON
-        - Create at least one tag for every story page in the analyzed block
-        - Do not skip a page unless it is clearly non-story content
-        - If a page is story content, it must receive at least one tag
-        - Prefer broad tags that together cover the full story passage
-        - If emotion is neutral or transitional, still assign the closest fitting category at low intensity
-        - Ignore front matter, metadata, title pages, table of contents, and Gutenberg/license text
-        - startLine must be less than or equal to endLine
-        - If a segment covers one line, use the same value for startLine and endLine
-        - Keep line numbers within the actual line count of the page
+        ═══════════════════════════════════════
+        WHAT TO SKIP (never tag these):
+        ═══════════════════════════════════════
+        - Book/chapter titles, section headers, author names, publisher info
+        - "Also by", dedications, table of contents, copyright, ISBN
+        - Project Gutenberg text, license text, page numbers, footnotes
+        - Epigraphs or short quotes before a chapter (under 3 lines)
+        - Any metadata that is NOT story narration, dialogue, or description
+
+        ONLY tag actual story content — narration, dialogue, action, description.
+
+        ═══════════════════════════════════════
+        HOW TO CHOOSE THE RIGHT CATEGORY
+        ═══════════════════════════════════════
+        DO NOT match keywords. Match the EMOTIONAL TONE of the scene as experienced by the reader.
+
+        Ask yourself these questions IN ORDER:
+        1. WHO is the point-of-view character right now? What are THEY feeling?
+        2. What is the NARRATIVE TONE — is the author building dread? warmth? tension? absurdity?
+        3. What would a film composer score this moment as?
+
+        COMMON MISTAKES TO AVOID:
+        - A conversation ABOUT a battle is not "Battle / Rage" — it might be "Tension / Thriller" or "Sad / Mourning".
+        - Children sneaking somewhere dangerous is NOT "Epic / Heroic" — it's likely "Tension / Thriller" or "Mystery / Scary".
+        - A kingdom falling discussed by indifferent characters is NOT "Sad / Mourning" — tag what the POV character feels.
+        - Travel is NOT automatically "Epic / Heroic" — a quiet walk is "Calm / Nature", a fearful escape is "Tension / Thriller".
+        - "Epic / Heroic" requires genuine triumph or courage FROM THE POV CHARACTER.
+
+        GUIDING PRINCIPLE: Tag the emotion the scene EVOKES, not the topic the scene DISCUSSES.
+
+        ═══════════════════════════════════════
+        INTENSITY LEVELS
+        ═══════════════════════════════════════
+        1 = subtle, understated, simmering
+        2 = clearly present, building
+        3 = peak, overwhelming, fully realized
+
+        ═══════════════════════════════════════
+        CONTEXT AWARENESS
+        ═══════════════════════════════════════
+        Use the CONTEXT provided to understand who the characters are, what the current arc is, and whether emotion is continuing or shifting from the previous page. If a mood carries over with no change, continue the same category — don't force variety.
+
+        ═══════════════════════════════════════
+        STRUCTURAL RULES
+        ═══════════════════════════════════════
+        - EVERY story line must be covered. No gaps between tags.
+        - The first tag MUST start at the first story line (skip headers/titles).
+        - The last tag MUST end at the last story line on the page.
+        - Split into multiple tags ONLY when emotion or intensity genuinely shifts.
+        - If the whole page has one mood, use ONE tag covering all story lines.
+        - startLine must be ≤ endLine
+        - Use PAGE_NUMBER exactly as the page field value provided.
+
+        ═══════════════════════════════════════
+        CONTEXT SUMMARY (required)
+        ═══════════════════════════════════════
+        You MUST include a "contextSummary" field in your response.
+        Write 2-3 sentences describing:
+        - WHO is present in the scene and what they are doing
+        - What EMOTIONAL STATE the POV character is in
+        - What MOOD should carry forward to the next page
+        This will be your only memory — write what would help you tag the next pages correctly.
 
         Return only valid JSON matching the schema.
         """
 
-        let prompt = """
-        Allowed categories:
-        \(allowedCategories.joined(separator: ", "))
+        let contextBlock: String
+        if context.isEmpty {
+            contextBlock = """
+            No previous context — this is the start of the book or a new chapter.
+            - Let the TEXT ITSELF establish the mood. Read the full page before tagging.
+            - Be conservative with intensity — start at 1 or 2 unless the opening is extreme.
+            - Do NOT default to "Epic / Heroic" for openings. Most books open with "Calm / Nature", "Mystery / Scary", or "Tension / Thriller".
+            - If the page is mostly scene-setting or introduction, default to "Calm / Nature" intensity 1.
+            """
+        } else {
+            contextBlock = context
+        }
 
-        Intensity guide:
-        1 = low
-        2 = medium
-        3 = high
+        let prompt = """
+        CONTEXT FROM PREVIOUS PAGES:
+        \(contextBlock)
+
+        ALLOWED CATEGORIES (use exactly as written):
+        \(allowedCategories.joined(separator: ", "))
 
         Analyze these pages:
 
@@ -167,15 +228,9 @@ final class OllamaService {
                     "items": .object([
                         "type": .string("object"),
                         "properties": .object([
-                            "page": .object([
-                                "type": .string("integer")
-                            ]),
-                            "startLine": .object([
-                                "type": .string("integer")
-                            ]),
-                            "endLine": .object([
-                                "type": .string("integer")
-                            ]),
+                            "page": .object(["type": .string("integer")]),
+                            "startLine": .object(["type": .string("integer")]),
+                            "endLine": .object(["type": .string("integer")]),
                             "categoryName": .object([
                                 "type": .string("string"),
                                 "enum": .array(allowedCategories.map { .string($0) })
@@ -194,12 +249,16 @@ final class OllamaService {
                         ]),
                         "additionalProperties": .bool(false)
                     ])
+                ]),
+                // ── NEW: context summary field ──
+                "contextSummary": .object([
+                    "type": .string("string"),
+                    "description": .string("2-3 sentence summary of who is present, their emotional state, and what mood carries forward")
                 ])
             ]),
-            "required": .array([.string("tags")]),
+            "required": .array([.string("tags"), .string("contextSummary")]),  // ← added contextSummary
             "additionalProperties": .bool(false)
         ])
-
         let requestBody = OllamaRequest(
             model: model,
             prompt: prompt,

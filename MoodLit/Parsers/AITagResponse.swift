@@ -19,6 +19,7 @@ import Foundation
 struct AITagResponse: Codable {
     let bookID: String?
     let tags: [AITag]
+    let contextSummary: String?
 }
 
 struct AITag: Codable {
