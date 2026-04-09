@@ -6,6 +6,7 @@
 
 import Foundation
 import Combine
+import UserNotifications
 
 class LibraryManager: ObservableObject {
 
@@ -84,9 +85,8 @@ class LibraryManager: ObservableObject {
                 try FileManager.default.copyItem(at: url, to: destURL)
             }
 
-            let parser = EpubParser()
-            let parsed = try await Task.detached(priority: .userInitiated) {
-                try parser.parse(url: destURL)
+            let parsed = try await Task.detached(priority: .utility) {
+                try EpubParser().parse(url: destURL)
             }.value
 
             print("✅ Parsed: \(parsed.title) — \(parsed.chapters.count) chapters")
@@ -98,14 +98,102 @@ class LibraryManager: ObservableObject {
                 self.addBook(book)
                 self.isImporting = false
             }
+            await requestNotificationPermission()
+            Task.detached(priority: .utility) {
+                await self.runBackgroundAnalysis(for: book.id)
+            }
+            
         } catch {
             print("❌ Import error: \(error)")
             await MainActor.run {
                 self.importError = error.localizedDescription
                 self.isImporting = false
             }
+            
+        }
+        
+    }
+    
+    func runBackgroundAnalysis(for bookID: UUID) async {
+        // 1. Mark .inProgress
+        await MainActor.run {
+            if let idx = books.firstIndex(where: { $0.id == bookID }) {
+                books[idx].aiAnalysisStatus = .inProgress
+                save()
+            }
+        }
+
+        // 2. Wait up to 60 seconds for a playlist to be assigned
+        var playlist: Playlist? = nil
+        let deadline = Date().addingTimeInterval(60)
+        while playlist == nil && Date() < deadline {
+            playlist = await MainActor.run {
+                guard let book = books.first(where: { $0.id == bookID }),
+                      let pid = book.assignedPlaylistID else { return nil }
+                return PlaylistStore.shared.playlists.first { $0.id == pid }
+            }
+            if playlist == nil { try? await Task.sleep(nanoseconds: 3_000_000_000) }
+        }
+
+        guard let playlist,
+              let book = await MainActor.run(body: { books.first(where: { $0.id == bookID }) })
+        else {
+            await MainActor.run {
+                if let idx = books.firstIndex(where: { $0.id == bookID }) {
+                    books[idx].aiAnalysisStatus = .notStarted; save()
+                }
+            }
+            return
+        }
+
+        // 3. Run analysis
+        do {
+            let analyzer = BookAIAnalyzer()
+            try await analyzer.analyzeEntireBook(book: book, playlist: playlist)
+            await MainActor.run {
+                if let idx = books.firstIndex(where: { $0.id == bookID }) {
+                    books[idx].aiAnalysisStatus = .completed; save()
+                }
+            }
+            sendAnalysisCompleteNotification(bookTitle: book.title)
+        } catch {
+            await MainActor.run {
+                if let idx = books.firstIndex(where: { $0.id == bookID }) {
+                    books[idx].aiAnalysisStatus = .failed; save()
+                }
+            }
         }
     }
+
+    func setAITagsEnabled(_ enabled: Bool, for bookID: UUID) {
+        guard let idx = books.firstIndex(where: { $0.id == bookID }) else { return }
+        books[idx].aiTagsEnabled = enabled
+        save()
+    }
+
+    private func requestNotificationPermission() async {
+        _ = try? await UNUserNotificationCenter.current()
+            .requestAuthorization(options: [.alert, .sound])
+    }
+
+    private func sendAnalysisCompleteNotification(bookTitle: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "AI Analysis Complete"
+        content.body = "\"\(bookTitle)\" is ready — open it to enable AI mood tags."
+        content.sound = .default
+        let req = UNNotificationRequest(
+            identifier: "ai-\(UUID().uuidString)",
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        )
+        UNUserNotificationCenter.current().add(req)
+    }
+    
+    
+    
+    
+    
+    
 
     // MARK: - Update Progress
 

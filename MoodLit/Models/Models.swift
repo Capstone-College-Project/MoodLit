@@ -10,10 +10,17 @@ enum BookSource: String, Codable {
     case local
 }
 
+enum AIAnalysisStatus: String, Codable {
+    case notStarted
+    case inProgress
+    case completed
+    case failed
+}
+
 // MARK: - BookType
 
 enum BookType: String, Codable {
-    case book      
+    case book
     case webNovel
 }
 
@@ -34,6 +41,8 @@ struct Book: Identifiable, Codable {
     var lastOpenedDate: Date?
     var readingProgress: ReadingProgress
     var aiContext: String  // rolling AI summary
+    var aiAnalysisStatus: AIAnalysisStatus  // tracks background analysis state
+    var aiTagsEnabled: Bool                 // user toggle: show AI tags or not
 
     init(
         id: UUID = UUID(),
@@ -48,7 +57,9 @@ struct Book: Identifiable, Codable {
         sceneTags: [SceneTag] = [],
         assignedPlaylistID: UUID? = nil,
         lastOpenedDate: Date? = nil,
-        aiContext: String = ""
+        aiContext: String = "",
+        aiAnalysisStatus: AIAnalysisStatus = .notStarted,
+        aiTagsEnabled: Bool = true
     ) {
         self.id = id
         self.title = title
@@ -64,6 +75,8 @@ struct Book: Identifiable, Codable {
         self.lastOpenedDate = lastOpenedDate
         self.readingProgress = ReadingProgress()
         self.aiContext = aiContext
+        self.aiAnalysisStatus = aiAnalysisStatus
+        self.aiTagsEnabled = aiTagsEnabled
     }
 
     // MARK: - Factory Methods
@@ -126,6 +139,7 @@ struct Book: Identifiable, Codable {
         case id, title, author, coverURL, coverImageData, source, bookType
         case localEPUBPath, chapters, sceneTags, assignedPlaylistID
         case lastOpenedDate, readingProgress, aiContext
+        case aiAnalysisStatus, aiTagsEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -144,6 +158,8 @@ struct Book: Identifiable, Codable {
         lastOpenedDate = try container.decodeIfPresent(Date.self, forKey: .lastOpenedDate)
         readingProgress = try container.decode(ReadingProgress.self, forKey: .readingProgress)
         aiContext = try container.decodeIfPresent(String.self, forKey: .aiContext) ?? ""
+        aiAnalysisStatus = try container.decodeIfPresent(AIAnalysisStatus.self, forKey: .aiAnalysisStatus) ?? .notStarted
+        aiTagsEnabled = try container.decodeIfPresent(Bool.self, forKey: .aiTagsEnabled) ?? true
     }
 }
 

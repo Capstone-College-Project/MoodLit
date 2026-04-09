@@ -166,6 +166,7 @@ struct BookCard: View {
     @State private var showPlaylistPicker: Bool = false
     @State private var showAddChapter: Bool = false
     @State private var showSceneMap: Bool = false
+    @State private var showAIChapterPicker: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -191,6 +192,16 @@ struct BookCard: View {
                 }
                 //Shows  btns to navigate books properties
                 menuButton
+
+                // AI status badge — top-left corner of cover
+                VStack {
+                    HStack {
+                        aiStatusBadge
+                            .padding(6)
+                        Spacer()
+                    }
+                    Spacer()
+                }
             }
 
             Text(book.title)
@@ -238,6 +249,40 @@ struct BookCard: View {
         }
         .sheet(isPresented: $showSceneMap) {
             SceneMapView(bookID: book.id)
+        }
+        .sheet(isPresented: $showAIChapterPicker) {
+            AIChapterPickerSheet(bookID: book.id)
+        }
+    }
+
+    // MARK: - AI Status Badge
+    // Small icon overlaid on the top-left of the book cover.
+    @ViewBuilder
+    private var aiStatusBadge: some View {
+        switch book.aiAnalysisStatus {
+        case .inProgress:
+            ProgressView()
+                .progressViewStyle(CircularProgressViewStyle(tint: Color.gold))
+                .scaleEffect(0.6)
+                .frame(width: 22, height: 22)
+                .background(Color.black.opacity(0.5))
+                .clipShape(Circle())
+        case .completed:
+            Image(systemName: "sparkles")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(Color.gold)
+                .frame(width: 22, height: 22)
+                .background(Color.black.opacity(0.5))
+                .clipShape(Circle())
+        case .failed:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 9))
+                .foregroundColor(.orange)
+                .frame(width: 22, height: 22)
+                .background(Color.black.opacity(0.5))
+                .clipShape(Circle())
+        case .notStarted:
+            EmptyView()
         }
     }
 
@@ -316,6 +361,22 @@ struct BookCard: View {
                 Label("Assign Playlist", systemImage: "music.note.list")
             }
 
+            // Show AI analysis option unless it's already running
+            if book.aiAnalysisStatus != .inProgress {
+                Button {
+                    showAIChapterPicker = true
+                } label: {
+                    switch book.aiAnalysisStatus {
+                    case .completed:
+                        Label("Re-analyse Chapters…", systemImage: "arrow.triangle.2.circlepath")
+                    case .failed:
+                        Label("Retry AI Analysis…", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+                    default:
+                        Label("Analyse Chapters…", systemImage: "sparkles")
+                    }
+                }
+            }
+
             if book.isWebNovel {
                 Button {
                     showAddChapter = true
@@ -340,6 +401,246 @@ struct BookCard: View {
                 .background(Color.black.opacity(0.45))
                 .clipShape(Circle())
                 .padding(6)
+        }
+    }
+}
+
+// MARK: - AI Chapter Picker Sheet
+// Lets the user choose which chapters to analyse instead of the whole book.
+struct AIChapterPickerSheet: View {
+    let bookID: UUID
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var library = LibraryManager.shared
+
+    // Live book — always reflects latest chapters
+    private var book: Book? {
+        library.books.first { $0.id == bookID }
+    }
+
+    private var chapters: [Chapter] {
+        book?.chapters ?? []
+    }
+
+    // Tracks which chapters are selected and which are currently being analysed
+    @State private var selectedChapters: Set<Int> = []
+    @State private var analysingChapters: Set<Int> = []
+    @State private var doneChapters: Set<Int> = []
+    @State private var errorMessage: String? = nil
+
+    private var playlist: Playlist? {
+        guard let pid = book?.assignedPlaylistID else { return nil }
+        return PlaylistStore.shared.playlists.first { $0.id == pid }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.bg.ignoresSafeArea()
+
+                if chapters.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "book.closed")
+                            .font(.system(size: 40))
+                            .foregroundColor(Color.text2)
+                        Text("No chapters loaded yet.")
+                            .foregroundColor(Color.text2)
+                    }
+                } else {
+                    VStack(spacing: 0) {
+                        // Playlist warning
+                        if playlist == nil {
+                            HStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundColor(.orange)
+                                Text("Assign a playlist first to enable AI analysis.")
+                                    .font(.caption)
+                                    .foregroundColor(Color.text2)
+                            }
+                            .padding(12)
+                            .background(Color.surface2)
+                        }
+
+                        // Select all / deselect all
+                        HStack {
+                            Button {
+                                if selectedChapters.count == chapters.count {
+                                    selectedChapters = []
+                                } else {
+                                    selectedChapters = Set(chapters.indices)
+                                }
+                            } label: {
+                                Text(selectedChapters.count == chapters.count
+                                     ? "Deselect All" : "Select All")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundColor(Color.gold)
+                            }
+                            Spacer()
+                            Text("\(selectedChapters.count) selected")
+                                .font(.caption2)
+                                .foregroundColor(Color.text2)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+
+                        List {
+                            ForEach(Array(chapters.enumerated()), id: \.offset) { idx, chapter in
+                                HStack(spacing: 12) {
+                                    // Status icon
+                                    ZStack {
+                                        if analysingChapters.contains(idx) {
+                                            ProgressView()
+                                                .scaleEffect(0.7)
+                                                .frame(width: 22, height: 22)
+                                        } else if doneChapters.contains(idx) {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .foregroundColor(.green)
+                                                .font(.system(size: 18))
+                                        } else {
+                                            Image(systemName: selectedChapters.contains(idx)
+                                                  ? "checkmark.circle.fill" : "circle")
+                                                .foregroundColor(selectedChapters.contains(idx)
+                                                                 ? Color.gold : Color.text2)
+                                                .font(.system(size: 18))
+                                        }
+                                    }
+                                    .frame(width: 22)
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(chapter.title)
+                                            .font(.subheadline)
+                                            .foregroundColor(Color.text)
+                                        Text("\(chapter.pages.count) page(s)")
+                                            .font(.caption2)
+                                            .foregroundColor(Color.text2)
+                                    }
+
+                                    Spacer()
+                                }
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    guard !analysingChapters.contains(idx),
+                                          !doneChapters.contains(idx) else { return }
+                                    if selectedChapters.contains(idx) {
+                                        selectedChapters.remove(idx)
+                                    } else {
+                                        selectedChapters.insert(idx)
+                                    }
+                                }
+                                .listRowBackground(Color.surface)
+                            }
+                        }
+                        .listStyle(.insetGrouped)
+                        .scrollContentBackground(.hidden)
+                        .background(Color.bg)
+
+                        if let error = errorMessage {
+                            Text(error)
+                                .font(.caption)
+                                .foregroundColor(.red)
+                                .padding(.horizontal)
+                        }
+
+                        // Analyse button
+                        Button {
+                            startAnalysis()
+                        } label: {
+                            HStack(spacing: 8) {
+                                if !analysingChapters.isEmpty {
+                                    ProgressView().tint(Color.bg).scaleEffect(0.8)
+                                } else {
+                                    Image(systemName: "sparkles")
+                                }
+                                Text(analysingChapters.isEmpty
+                                     ? "Analyse \(selectedChapters.count) Chapter(s)"
+                                     : "Analysing…")
+                            }
+                            .font(.headline)
+                            .foregroundColor(Color.bg)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(selectedChapters.isEmpty || playlist == nil
+                                        ? Color.gold.opacity(0.4) : Color.gold)
+                            .cornerRadius(12)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 20)
+                        }
+                        .disabled(selectedChapters.isEmpty || playlist == nil || !analysingChapters.isEmpty)
+                    }
+                }
+            }
+            .navigationTitle("Analyse Chapters")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .foregroundColor(Color.gold)
+                }
+            }
+        }
+        .background(Color.bg)
+        .onAppear {
+            // Gutenberg books load chapters lazily on first open.
+            // If the picker is opened before the book was ever read,
+            // chapters will be empty — so we parse the epub right now.
+            guard let book, book.chapters.isEmpty, !book.localEPUBPath.isEmpty else { return }
+            Task {
+                let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                let fileName = URL(fileURLWithPath: book.localEPUBPath).lastPathComponent
+                let url = docs.appendingPathComponent(fileName)
+                guard FileManager.default.fileExists(atPath: url.path) else { return }
+                do {
+                    let parsed = try await Task.detached(priority: .userInitiated) {
+                        try EpubParser().parse(url: url)
+                    }.value
+                    await MainActor.run {
+                        LibraryManager.shared.updateChapters(for: book.id, chapters: parsed.chapters)
+                    }
+                } catch {
+                    print("❌ Chapter picker parse error: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private func startAnalysis() {
+        guard let book else { errorMessage = "Book not found."; return }
+        guard let playlist else { errorMessage = "Assign a playlist first."; return }
+        errorMessage = nil
+
+        let chaptersToAnalyse = selectedChapters.sorted()
+        analysingChapters = Set(chaptersToAnalyse)
+
+        // Mark book as in-progress
+        if let idx = library.books.firstIndex(where: { $0.id == bookID }) {
+            library.books[idx].aiAnalysisStatus = .inProgress
+            library.save()
+        }
+
+        let bookSnapshot = book
+        let playlistSnapshot = playlist
+
+        Task.detached(priority: .utility) {
+            let analyzer = BookAIAnalyzer()
+
+            for chapterIdx in chaptersToAnalyse {
+                await analyzer.analyzeChapter(
+                    at: chapterIdx,
+                    book: bookSnapshot,
+                    playlist: playlistSnapshot
+                )
+                await MainActor.run {
+                    analysingChapters.remove(chapterIdx)
+                    doneChapters.insert(chapterIdx)
+                    selectedChapters.remove(chapterIdx)
+                }
+            }
+
+            await MainActor.run {
+                if let idx = LibraryManager.shared.books.firstIndex(where: { $0.id == bookSnapshot.id }) {
+                    LibraryManager.shared.books[idx].aiAnalysisStatus = .completed
+                    LibraryManager.shared.save()
+                }
+            }
         }
     }
 }

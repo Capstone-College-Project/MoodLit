@@ -44,9 +44,8 @@ struct BookReaderView: View {
     @State private var showChapterList = false
     @State private var showReaderSettings = false
     @State private var isTaggingMode: Bool = false
-    @State private var isAnalyzingAI: Bool = false
+    // AI state is driven by book.aiAnalysisStatus / book.aiTagsEnabled — no local spinner needed
     @State private var aiErrorMessage: String? = nil
-    @State private var aiSuccessMessage: String? = nil
 
     init(book: Book) {
         self.bookID = book.id
@@ -91,10 +90,15 @@ struct BookReaderView: View {
                         //Its used for changing pages
                         TabView(selection: $currentPageIndex) {
                             ForEach(pages.indices, id: \.self) { index in
+                                // Only show AI scene tags when the user has them enabled.
+                                // Manual tags (with a musicOverride) are always visible.
+                                let visibleTags = book.aiTagsEnabled
+                                    ? book.sceneTags
+                                    : book.sceneTags.filter { $0.musicOverride != nil }
                                 PageView(
                                     page: pages[index],
                                     bookID: bookID,
-                                    sceneTags: book.sceneTags,
+                                    sceneTags: visibleTags,
                                     playlist: playlist,
                                     isTaggingMode: isTaggingMode,
                                     tracker: tracker,
@@ -145,20 +149,8 @@ struct BookReaderView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 HStack(spacing: 4) {
-                    Button {
-                        Task {
-                            await analyzeBookWithAI()
-                        }
-                    } label: {
-                        if isAnalyzingAI {
-                            ProgressView()
-                                .tint(Color.gold)
-                        } else {
-                            Image(systemName: "sparkles")
-                                .foregroundColor(Color.text2)
-                        }
-                    }
-                    .disabled(isAnalyzingAI)
+                    // AI tags button — behaviour depends on analysis status
+                    aiToolbarButton
 
                     Button {
                         isTaggingMode.toggle()
@@ -206,11 +198,23 @@ struct BookReaderView: View {
         }
         .onChange(of: book?.sceneTags) { oldValue, newValue in
             guard let book, let playlist else { return }
-            musicEngine.load(sceneTags: book.sceneTags, playlist: playlist)
-            // Force re-evaluation on the current line so the new track plays immediately
+            // Respect the AI toggle when reloading
+            let activeTags = book.aiTagsEnabled
+                ? book.sceneTags
+                : book.sceneTags.filter { $0.musicOverride != nil }
+            musicEngine.load(sceneTags: activeTags, playlist: playlist)
             musicEngine.onLineChanged(page: tracker.activePage, line: tracker.activeLine)
         }
-        .alert("AI Analysis Error", isPresented: Binding(
+        // Bug 3 fix: reload music immediately when user flips the AI tags toggle
+        .onChange(of: book?.aiTagsEnabled) { _, _ in
+            guard let book, let playlist else { return }
+            let activeTags = book.aiTagsEnabled
+                ? book.sceneTags
+                : book.sceneTags.filter { $0.musicOverride != nil }
+            musicEngine.load(sceneTags: activeTags, playlist: playlist)
+            musicEngine.onLineChanged(page: tracker.activePage, line: tracker.activeLine)
+        }
+        .alert("AI Error", isPresented: Binding(
             get: { aiErrorMessage != nil },
             set: { if !$0 { aiErrorMessage = nil } }
         )) {
@@ -218,13 +222,53 @@ struct BookReaderView: View {
         } message: {
             Text(aiErrorMessage ?? "Unknown error")
         }
-        .alert("AI Tagging Complete", isPresented: Binding(
-            get: { aiSuccessMessage != nil },
-            set: { if !$0 { aiSuccessMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) { aiSuccessMessage = nil }
-        } message: {
-            Text(aiSuccessMessage ?? "")
+    }
+
+    // MARK: - AI Toolbar Button
+    // Switches on analysis status so the correct control is shown:
+    //   .notStarted  → dimmed sparkles, tap shows a hint
+    //   .inProgress  → spinner (non-interactive)
+    //   .completed   → gold/grey sparkles toggle
+    //   .failed      → orange retry button
+    @ViewBuilder
+    private var aiToolbarButton: some View {
+        switch book?.aiAnalysisStatus ?? .notStarted {
+
+        case .completed:
+            Button {
+                guard let book else { return }
+                LibraryManager.shared.setAITagsEnabled(!book.aiTagsEnabled, for: bookID)
+            } label: {
+                Image(systemName: book?.aiTagsEnabled == true ? "sparkles" : "wand.and.rays.inverse")
+                    .foregroundColor(book?.aiTagsEnabled == true ? Color.gold : Color.text2)
+            }
+
+        case .inProgress:
+            ProgressView()
+                .tint(Color.gold)
+                .scaleEffect(0.85)
+
+        case .failed:
+            Button {
+                guard let book else {
+                    aiErrorMessage = "Book not found."
+                    return
+                }
+                Task.detached(priority: .background) {
+                    await LibraryManager.shared.runBackgroundAnalysis(for: book.id)
+                }
+            } label: {
+                Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
+                    .foregroundColor(.orange)
+            }
+
+        case .notStarted:
+            Button {
+                aiErrorMessage = "AI analysis starts automatically once you assign a playlist to this book."
+            } label: {
+                Image(systemName: "sparkles")
+                    .foregroundColor(Color.text2.opacity(0.4))
+            }
         }
     }
 
@@ -311,9 +355,10 @@ struct BookReaderView: View {
     //If user is coming from Scene map this direclty redirects to the specific
     //Line that the user is pick in Scene Map
     //Parse Online Books that havent been parsed
+    @MainActor
     private func setup() {
         guard let book else { return }
-        LibraryManager.shared.updateLastOpened(for: book.id) 
+        LibraryManager.shared.updateLastOpened(for: book.id)
         if let playlist { musicEngine.load(sceneTags: book.sceneTags, playlist: playlist) }
         currentPageIndex = book.readingProgress.pageIndex
         let pages = book.allPages
@@ -332,6 +377,7 @@ struct BookReaderView: View {
 
     //Saves the current Page progress and line to books.reading progress
     //Stops music
+    @MainActor
     private func saveProgress() {
         guard let book else { return }
         musicEngine.stop()
@@ -351,50 +397,20 @@ struct BookReaderView: View {
         guard FileManager.default.fileExists(atPath: url.path) else {
             print("❌ ePub not found — \(fileName)"); return
         }
+        let bookID = book.id
         do {
-            let parser = EpubParser()
             let parsed = try await Task.detached(priority: .userInitiated) {
-                try parser.parse(url: url)
+                try EpubParser().parse(url: url)
             }.value
             print("✅ Loaded \(parsed.chapters.count) chapters")
             await MainActor.run {
-                LibraryManager.shared.updateChapters(for: book.id, chapters: parsed.chapters)
+                LibraryManager.shared.updateChapters(for: bookID, chapters: parsed.chapters)
             }
         } catch {
             print("❌ Parse error: \(error.localizedDescription)")
         }
     }
-    @MainActor
-    private func analyzeBookWithAI() async {
-        guard let book else {
-            aiErrorMessage = "Book not found."
-            return
-        }
 
-        guard let playlist else {
-            aiErrorMessage = "Please assign a playlist to this book before using AI tagging."
-            return
-        }
-
-        isAnalyzingAI = true
-        aiErrorMessage = nil
-        aiSuccessMessage = nil
-        defer { isAnalyzingAI = false }
-
-        do {
-            let analyzer = BookAIAnalyzer()
-            try await analyzer.analyze(
-                book: book,
-                playlist: playlist,
-                startPageIndex: currentPageIndex
-            )
-            aiSuccessMessage = "AI tagging finished successfully."
-            print("✅ AI analysis completed for \(book.title)")
-        } catch {
-            aiErrorMessage = error.localizedDescription
-            print("❌ AI analysis failed: \(error.localizedDescription)")
-        }
-    }
     private func tagCountForCurrentPage() -> Int {
         guard let book else { return 0 }
         let pages = book.allPages

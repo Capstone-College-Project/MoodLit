@@ -79,9 +79,58 @@ final class OllamaService {
 
     // Simulator usually works with localhost.
     // For a real iPhone later, replace with your Mac's local IP.
-    private let endpoint = URL(string: "http://192.168.40.5:11434/api/generate")!
-
+    private let endpoint: URL = {
+        #if targetEnvironment(simulator)
+            return URL(string: "http://127.0.0.1:11434/api/generate")!
+        #else
+            return URL(string: "http://192.168.68.113:11434/api/generate")!
+        #endif
+    }()
     private init() {}
+
+    // MARK: - Raw generate (used by BookAIAnalyzer pipeline)
+    // Sends a system+prompt and returns the raw JSON response string.
+    func generate(
+        system: String,
+        prompt: String,
+        schema: JSONValue,
+        model: String = "llama3.2"
+    ) async throws -> String {
+        let requestBody = OllamaRequest(
+            model: model,
+            prompt: prompt,
+            system: system,
+            stream: false,
+            format: schema
+        )
+        let bodyData = try JSONEncoder().encode(requestBody)
+
+        // Retry up to 3 times — Ollama sometimes drops connections between chapters
+        var lastError: Error = URLError(.cannotConnectToHost)
+        for attempt in 1...3 {
+            do {
+                var request = URLRequest(url: endpoint, timeoutInterval: 600)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.httpBody = bodyData
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse,
+                      (200...299).contains(httpResponse.statusCode) else {
+                    throw URLError(.badServerResponse)
+                }
+                let envelope = try JSONDecoder().decode(OllamaResponseEnvelope.self, from: data)
+                return envelope.response
+            } catch {
+                lastError = error
+                if attempt < 3 {
+                    print("   ⚠️ Ollama attempt \(attempt) failed (\(error.localizedDescription)) — retrying in 3s…")
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                }
+            }
+        }
+        throw lastError
+    }
 
     // MARK: - Analyze one page
     // Wrapper around the 10-page/block version.
