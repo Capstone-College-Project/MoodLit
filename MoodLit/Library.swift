@@ -163,7 +163,7 @@ struct BookCard: View {
     let book: Book
     @ObservedObject private var library = LibraryManager.shared
     @State private var showDeleteConfirm: Bool = false
-    @State private var showPlaylistPicker: Bool = false
+    @State private var showMusicSourcePicker = false
     @State private var showAddChapter: Bool = false
     @State private var showSceneMap: Bool = false
     @State private var showAIChapterPicker: Bool = false
@@ -241,8 +241,8 @@ struct BookCard: View {
         } message: {
             Text("This will remove the book from your library.")
         }
-        .sheet(isPresented: $showPlaylistPicker) {
-            PlaylistPickerSheet(book: book)
+        .sheet(isPresented: $showMusicSourcePicker) {
+            MusicSourcePickerSheet(bookID: book.id)
         }
         .sheet(isPresented: $showAddChapter) {
             AddChapterSheet(bookID: book.id)
@@ -356,9 +356,9 @@ struct BookCard: View {
             }
 
             Button {
-                showPlaylistPicker = true
+                showMusicSourcePicker = true
             } label: {
-                Label("Assign Playlist", systemImage: "music.note.list")
+                Label("Music Source", systemImage: "speaker.wave.2.fill")
             }
 
             // Show AI analysis option unless it's already running
@@ -610,37 +610,57 @@ struct AIChapterPickerSheet: View {
         let chaptersToAnalyse = selectedChapters.sorted()
         analysingChapters = Set(chaptersToAnalyse)
 
-        // Mark book as in-progress
         if let idx = library.books.firstIndex(where: { $0.id == bookID }) {
             library.books[idx].aiAnalysisStatus = .inProgress
             library.save()
         }
 
-        let bookSnapshot = book
-        let playlistSnapshot = playlist
+        let capturedBookID = bookID
+        let capturedPlaylist = playlist
+        let capturedChapters = chaptersToAnalyse
 
-        Task.detached(priority: .utility) {
-            let analyzer = BookAIAnalyzer()
+        Task {
+            await runAnalysisLoop(
+                bookID: capturedBookID,
+                playlist: capturedPlaylist,
+                chapterIndices: capturedChapters
+            )
+        }
+    }
 
-            for chapterIdx in chaptersToAnalyse {
-                await analyzer.analyzeChapter(
-                    at: chapterIdx,
-                    book: bookSnapshot,
-                    playlist: playlistSnapshot
+    @MainActor
+    private func runAnalysisLoop(
+        bookID: UUID,
+        playlist: Playlist,
+        chapterIndices: [Int]
+    ) async {
+        let analyzer = ChapterAnalyzer()
+        var anyFailed = false
+
+        for chapterIdx in chapterIndices {
+            guard let freshBook = LibraryManager.shared.books.first(where: { $0.id == bookID }) else {
+                continue
+            }
+
+            do {
+                try await analyzer.analyze(
+                    book: freshBook,
+                    playlist: playlist,
+                    chapterIndex: chapterIdx
                 )
-                await MainActor.run {
-                    analysingChapters.remove(chapterIdx)
-                    doneChapters.insert(chapterIdx)
-                    selectedChapters.remove(chapterIdx)
-                }
+                analysingChapters.remove(chapterIdx)
+                doneChapters.insert(chapterIdx)
+                selectedChapters.remove(chapterIdx)
+            } catch {
+                print("❌ Chapter \(chapterIdx) failed: \(error.localizedDescription)")
+                anyFailed = true
+                analysingChapters.remove(chapterIdx)
             }
+        }
 
-            await MainActor.run {
-                if let idx = LibraryManager.shared.books.firstIndex(where: { $0.id == bookSnapshot.id }) {
-                    LibraryManager.shared.books[idx].aiAnalysisStatus = .completed
-                    LibraryManager.shared.save()
-                }
-            }
+        if let idx = LibraryManager.shared.books.firstIndex(where: { $0.id == bookID }) {
+            LibraryManager.shared.books[idx].aiAnalysisStatus = anyFailed ? .failed : .completed
+            LibraryManager.shared.save()
         }
     }
 }

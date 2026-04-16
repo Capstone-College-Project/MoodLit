@@ -1,13 +1,12 @@
-import SwiftUI
+//
+//  MusicSourcePickerSheet.swift
+//  MoodLit
+//
+//  Created by Anthony Chang Martinez on 4/9/26.
+//
 
-// MARK: - MusicSourcePickerSheet
-//
-// Lets the user choose how a book plays music:
-//   • Playlist  — uses tracks from an assigned Playlist
-//   • Stream    — uses AI-generated music prompts via LatentScore (stubbed for now)
-//
-// Both modes require an assigned playlist. Stream mode falls back to playlist
-// tracks when a scene has no AI-generated music prompt.
+
+import SwiftUI
 
 struct MusicSourcePickerSheet: View {
     let bookID: UUID
@@ -35,13 +34,11 @@ struct MusicSourcePickerSheet: View {
                         
                         headerSection
                         
-                        // ── Music Source Cards ──
                         VStack(spacing: 12) {
                             sourceCard(.playlist)
                             sourceCard(.stream)
                         }
                         
-                        // ── Assigned Playlist Section ──
                         playlistSection
                     }
                     .padding(.horizontal, 20)
@@ -107,16 +104,6 @@ struct MusicSourcePickerSheet: View {
                         Text(source.displayName)
                             .font(.subheadline.weight(.semibold))
                             .foregroundColor(Color.text)
-                        
-                        if source == .stream {
-                            Text("Coming soon")
-                                .font(.caption2.weight(.medium))
-                                .foregroundColor(Color.gold)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.gold.opacity(0.12))
-                                .cornerRadius(4)
-                        }
                     }
                     
                     Spacer()
@@ -137,13 +124,13 @@ struct MusicSourcePickerSheet: View {
                     .foregroundColor(Color.text2)
                     .fixedSize(horizontal: false, vertical: true)
                 
-                // Stream mode shows a placeholder note
+                // Stream mode info when selected
                 if source == .stream && isSelected {
                     HStack(spacing: 6) {
-                        Image(systemName: "info.circle.fill")
+                        Image(systemName: "waveform")
                             .font(.system(size: 11))
                             .foregroundColor(Color.gold)
-                        Text("LatentScore integration is coming. Scenes will use playlist tracks until streaming is enabled.")
+                        Text("AI-generated music will be created for each scene. First play takes a few seconds while audio renders — replays are instant from cache.")
                             .font(.caption2)
                             .foregroundColor(Color.text2)
                     }
@@ -247,7 +234,6 @@ struct MusicSourcePickerSheet: View {
                 .buttonStyle(.plain)
             }
             
-            // Helper text below the playlist row
             Text(playlistHelperText)
                 .font(.caption2)
                 .foregroundColor(Color.text2)

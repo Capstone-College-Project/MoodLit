@@ -58,7 +58,8 @@ struct SceneTagLineWrapper<Content: View>: View {
 
     //Keeps track of where the bage would appear
     private var isTagStart: Bool {
-        activeTag?.startLine == lineIndex
+        guard let tag = activeTag else { return false }
+        return tag.startPage == page && tag.startLine == lineIndex
     }
 
     var body: some View {
@@ -114,8 +115,9 @@ struct SceneTagLineWrapper<Content: View>: View {
             if let playlist {
                 SceneTagEditorSheet(
                     bookID: bookID,
-                    page: page,
+                    startPage: page,
                     startLine: lineIndex,
+                    endPage: page,
                     endLine: lineIndex,
                     playlist: playlist
                 )
@@ -125,8 +127,9 @@ struct SceneTagLineWrapper<Content: View>: View {
             if let playlist, let tag = activeTag {
                 SceneTagEditorSheet(
                     bookID: bookID,
-                    page: page,
+                    startPage: tag.startPage,
                     startLine: tag.startLine,
+                    endPage: tag.endPage,
                     endLine: tag.endLine,
                     playlist: playlist,
                     existingTag: tag

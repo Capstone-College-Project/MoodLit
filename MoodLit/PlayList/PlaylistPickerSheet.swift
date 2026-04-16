@@ -1,9 +1,19 @@
+//
+//  PlaylistPickerSheet.swift
+//  MoodLit
+//
+//  Created by Anthony Chang Martinez on 4/11/26.
+//
+
+
 import SwiftUI
 
 // MARK: - PlaylistPickerSheet
 //
-// Lets the user assign a playlist to a book. Opened from MusicSourcePickerSheet
-// when the user wants to pick or change the playlist.
+// Lets the user assign one of their existing playlists to a book.
+// Opened from MusicSourcePickerSheet when the user picks or changes
+// the playlist. NOT related to PlaylistNameSheet, which is for
+// creating or renaming a playlist's name.
 
 struct PlaylistPickerSheet: View {
     let book: Book
@@ -67,8 +77,6 @@ struct PlaylistPickerSheet: View {
         .background(Color.bg)
     }
     
-    // MARK: - Playlist Row
-    
     @ViewBuilder
     private func playlistRow(_ playlist: Playlist) -> some View {
         let isSelected = currentBook?.assignedPlaylistID == playlist.id
@@ -83,8 +91,7 @@ struct PlaylistPickerSheet: View {
                     .foregroundColor(isSelected ? Color.gold : Color.text2)
                     .frame(width: 36, height: 36)
                     .background(
-                        (isSelected ? Color.gold : Color.text2)
-                            .opacity(0.12)
+                        (isSelected ? Color.gold : Color.text2).opacity(0.12)
                     )
                     .clipShape(Circle())
                 
@@ -124,8 +131,6 @@ struct PlaylistPickerSheet: View {
         }
         .buttonStyle(.plain)
     }
-    
-    // MARK: - Empty State
     
     private var emptyState: some View {
         VStack(spacing: 16) {

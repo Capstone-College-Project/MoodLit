@@ -26,6 +26,51 @@ enum BookType: String, Codable {
 
 // MARK: - Book
 
+// MARK: - Music Source Mode
+//
+// Determines how scene tags drive the music engine.
+//
+// .playlist — scenes map to emotion categories, which map to tracks
+//             from the assigned Playlist. Pre-existing music files.
+//
+// .stream   — scenes use AI-generated music prompts (musicPrompt field)
+//             sent to a music generator (LatentScore AI) for streaming.
+//             Falls back to playlist tracks when a scene has no prompt.
+//
+// Both modes require an assigned playlist. The user can switch between
+// them at any time without re-running AI analysis, because every scene
+// stores BOTH the emotion category AND the music prompt.
+
+enum MusicSource: String, Codable, CaseIterable {
+    case playlist
+    case stream
+    
+    var displayName: String {
+        switch self {
+        case .playlist: return "Playlist Tracks"
+        case .stream:   return "AI Streaming"
+        }
+    }
+    
+    var iconName: String {
+        switch self {
+        case .playlist: return "music.note.list"
+        case .stream:   return "waveform.badge.plus"
+        }
+    }
+    
+    var description: String {
+        switch self {
+        case .playlist:
+            return "Scenes play tracks from your assigned playlist based on emotion."
+        case .stream:
+            return "Scenes stream AI-generated music tailored to each moment. Falls back to playlist tracks when needed."
+        }
+    }
+}
+
+
+
 struct Book: Identifiable, Codable {
     let id: UUID
     var title: String
@@ -40,10 +85,14 @@ struct Book: Identifiable, Codable {
     var assignedPlaylistID: UUID?
     var lastOpenedDate: Date?
     var readingProgress: ReadingProgress
-    var aiContext: String  // rolling AI summary
-    var aiAnalysisStatus: AIAnalysisStatus  // tracks background analysis state
-    var aiTagsEnabled: Bool                 // user toggle: show AI tags or not
-
+    var aiContext: String
+    var aiAnalysisStatus: AIAnalysisStatus = .notStarted
+    var aiTagsEnabled: Bool = true
+    
+    // NEW — defaults to .playlist for backwards compatibility
+    var musicSource: MusicSource = .playlist             // user toggle: show AI tags or not
+    
+    
     init(
         id: UUID = UUID(),
         title: String,
@@ -58,8 +107,7 @@ struct Book: Identifiable, Codable {
         assignedPlaylistID: UUID? = nil,
         lastOpenedDate: Date? = nil,
         aiContext: String = "",
-        aiAnalysisStatus: AIAnalysisStatus = .notStarted,
-        aiTagsEnabled: Bool = true
+        musicSource: MusicSource = .playlist
     ) {
         self.id = id
         self.title = title
@@ -75,8 +123,7 @@ struct Book: Identifiable, Codable {
         self.lastOpenedDate = lastOpenedDate
         self.readingProgress = ReadingProgress()
         self.aiContext = aiContext
-        self.aiAnalysisStatus = aiAnalysisStatus
-        self.aiTagsEnabled = aiTagsEnabled
+        self.musicSource = musicSource
     }
 
     // MARK: - Factory Methods
@@ -138,7 +185,7 @@ struct Book: Identifiable, Codable {
     enum CodingKeys: String, CodingKey {
         case id, title, author, coverURL, coverImageData, source, bookType
         case localEPUBPath, chapters, sceneTags, assignedPlaylistID
-        case lastOpenedDate, readingProgress, aiContext
+        case lastOpenedDate, readingProgress, aiContext, musicSource
         case aiAnalysisStatus, aiTagsEnabled
     }
 
@@ -158,8 +205,34 @@ struct Book: Identifiable, Codable {
         lastOpenedDate = try container.decodeIfPresent(Date.self, forKey: .lastOpenedDate)
         readingProgress = try container.decode(ReadingProgress.self, forKey: .readingProgress)
         aiContext = try container.decodeIfPresent(String.self, forKey: .aiContext) ?? ""
+        musicSource = try container.decodeIfPresent(MusicSource.self, forKey: .musicSource) ?? .playlist
+        
+        // NEW — decode AI state fields with fallback defaults for old books
         aiAnalysisStatus = try container.decodeIfPresent(AIAnalysisStatus.self, forKey: .aiAnalysisStatus) ?? .notStarted
         aiTagsEnabled = try container.decodeIfPresent(Bool.self, forKey: .aiTagsEnabled) ?? true
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(author, forKey: .author)
+        try container.encodeIfPresent(coverURL, forKey: .coverURL)
+        try container.encodeIfPresent(coverImageData, forKey: .coverImageData)
+        try container.encode(source, forKey: .source)
+        try container.encode(bookType, forKey: .bookType)
+        try container.encode(localEPUBPath, forKey: .localEPUBPath)
+        try container.encode(chapters, forKey: .chapters)
+        try container.encode(sceneTags, forKey: .sceneTags)
+        try container.encodeIfPresent(assignedPlaylistID, forKey: .assignedPlaylistID)
+        try container.encodeIfPresent(lastOpenedDate, forKey: .lastOpenedDate)
+        try container.encode(readingProgress, forKey: .readingProgress)
+        try container.encode(aiContext, forKey: .aiContext)
+        try container.encode(musicSource, forKey: .musicSource)
+        
+        // NEW — persist AI state so it survives app restarts
+        try container.encode(aiAnalysisStatus, forKey: .aiAnalysisStatus)
+        try container.encode(aiTagsEnabled, forKey: .aiTagsEnabled)
     }
 }
 
@@ -193,31 +266,62 @@ struct BookPage: Identifiable, Codable {
 
 // MARK: - SceneTag
 
-struct SceneTag: Identifiable, Codable,Equatable {
+struct SceneTag: Identifiable, Codable, Equatable {
     let id: UUID
-    let page: Int
+    let startPage: Int
     let startLine: Int
+    let endPage: Int
     let endLine: Int
     let emotionCategoryID: UUID
-    let intensityLevel: Int
+    var intensityLevel: Int
     var musicOverride: MusicFile?
-
+    
+    // NEW: AI-generated fields
+    var musicPrompt: String?      // Pass 3 output — prompt for LatentScore AI
+    var sceneSummary: String?     // Pass 1 output — short description of what happens
+    
     init(
         id: UUID = UUID(),
-        page: Int,
+        startPage: Int,
         startLine: Int,
+        endPage: Int,
         endLine: Int,
         emotionCategoryID: UUID,
         intensityLevel: Int,
-        musicOverride: MusicFile? = nil
+        musicOverride: MusicFile? = nil,
+        musicPrompt: String? = nil,
+        sceneSummary: String? = nil
     ) {
         self.id = id
-        self.page = page
+        self.startPage = startPage
         self.startLine = startLine
+        self.endPage = endPage
         self.endLine = endLine
         self.emotionCategoryID = emotionCategoryID
-        self.intensityLevel = intensityLevel.clamped(to: 1...3)
+        self.intensityLevel = intensityLevel
         self.musicOverride = musicOverride
+        self.musicPrompt = musicPrompt
+        self.sceneSummary = sceneSummary
+    }
+    
+    // MARK: - Range Helpers
+    
+    /// True if the given (page, line) position falls within this scene's range.
+    func contains(page: Int, line: Int) -> Bool {
+        if page < startPage || page > endPage { return false }
+        if page == startPage && line < startLine { return false }
+        if page == endPage && line > endLine { return false }
+        return true
+    }
+    
+    /// True if this scene touches the given page at all.
+    func touches(page: Int) -> Bool {
+        return page >= startPage && page <= endPage
+    }
+    
+    /// Comparable sort key for ordering scenes.
+    var startKey: (Int, Int) {
+        (startPage, startLine)
     }
 }
 

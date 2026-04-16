@@ -98,10 +98,6 @@ class LibraryManager: ObservableObject {
                 self.addBook(book)
                 self.isImporting = false
             }
-            await requestNotificationPermission()
-            Task.detached(priority: .utility) {
-                await self.runBackgroundAnalysis(for: book.id)
-            }
             
         } catch {
             print("❌ Import error: \(error)")
@@ -112,57 +108,6 @@ class LibraryManager: ObservableObject {
             
         }
         
-    }
-    
-    func runBackgroundAnalysis(for bookID: UUID) async {
-        // 1. Mark .inProgress
-        await MainActor.run {
-            if let idx = books.firstIndex(where: { $0.id == bookID }) {
-                books[idx].aiAnalysisStatus = .inProgress
-                save()
-            }
-        }
-
-        // 2. Wait up to 60 seconds for a playlist to be assigned
-        var playlist: Playlist? = nil
-        let deadline = Date().addingTimeInterval(60)
-        while playlist == nil && Date() < deadline {
-            playlist = await MainActor.run {
-                guard let book = books.first(where: { $0.id == bookID }),
-                      let pid = book.assignedPlaylistID else { return nil }
-                return PlaylistStore.shared.playlists.first { $0.id == pid }
-            }
-            if playlist == nil { try? await Task.sleep(nanoseconds: 3_000_000_000) }
-        }
-
-        guard let playlist,
-              let book = await MainActor.run(body: { books.first(where: { $0.id == bookID }) })
-        else {
-            await MainActor.run {
-                if let idx = books.firstIndex(where: { $0.id == bookID }) {
-                    books[idx].aiAnalysisStatus = .notStarted; save()
-                }
-            }
-            return
-        }
-
-        // 3. Run analysis
-        do {
-            let analyzer = BookAIAnalyzer()
-            try await analyzer.analyzeEntireBook(book: book, playlist: playlist)
-            await MainActor.run {
-                if let idx = books.firstIndex(where: { $0.id == bookID }) {
-                    books[idx].aiAnalysisStatus = .completed; save()
-                }
-            }
-            sendAnalysisCompleteNotification(bookTitle: book.title)
-        } catch {
-            await MainActor.run {
-                if let idx = books.firstIndex(where: { $0.id == bookID }) {
-                    books[idx].aiAnalysisStatus = .failed; save()
-                }
-            }
-        }
     }
 
     func setAITagsEnabled(_ enabled: Bool, for bookID: UUID) {
@@ -256,6 +201,12 @@ class LibraryManager: ObservableObject {
             books[idx].aiContext = context
             save()
         }
+    }
+    
+    func setMusicSource(_ source: MusicSource, for bookID: UUID) {
+        guard let idx = books.firstIndex(where: { $0.id == bookID }) else { return }
+        books[idx].musicSource = source
+        save()
     }
     
 }

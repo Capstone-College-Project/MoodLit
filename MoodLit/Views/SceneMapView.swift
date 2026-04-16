@@ -33,7 +33,8 @@ struct SceneMapView: View {
     //used to arrage every display of sceneTags on View
     private var sortedTags: [SceneTag] {
         book?.sceneTags.sorted { a, b in
-            a.page != b.page ? a.page < b.page : a.startLine < b.startLine
+            if a.startPage != b.startPage { return a.startPage < b.startPage }
+            return a.startLine < b.startLine
         } ?? []
     }
     
@@ -44,11 +45,7 @@ struct SceneMapView: View {
         guard let book else { return nil }
         let currentPage = book.allPages[safe: book.readingProgress.pageIndex]?.number ?? 0
         let currentLine = book.readingProgress.lineIndex
-        return sortedTags.firstIndex { tag in
-            tag.page == currentPage &&
-            currentLine >= tag.startLine &&
-            currentLine <= tag.endLine
-        }
+        return sortedTags.firstIndex { $0.contains(page: currentPage, line: currentLine) }
     }
 
     //Body of the View that Displays All Features of this View
@@ -99,8 +96,7 @@ struct SceneMapView: View {
     //tracker.targetLine from lineIndex so PageView scrolls to the exact line.
     private func goToScene(tag: SceneTag) {
         guard let book else { return }
-        // Find the page index for this tag's page number
-        if let pageIndex = book.allPages.firstIndex(where: { $0.number == tag.page }) {
+        if let pageIndex = book.allPages.firstIndex(where: { $0.number == tag.startPage }) {
             var progress = book.readingProgress
             progress.pageIndex = pageIndex
             progress.lineIndex = tag.startLine
@@ -467,7 +463,7 @@ struct SceneMapView: View {
     //It picks the first line in scene and  picks it as title
     private func sceneTitle(for tag: SceneTag) -> String {
         guard let book else { return "Scene" }
-        if let page = book.allPages.first(where: { $0.number == tag.page }) {
+        if let page = book.allPages.first(where: { $0.number == tag.startPage }) {
             if tag.startLine < page.lines.count {
                 let line = page.lines[tag.startLine].trimmingCharacters(in: .whitespacesAndNewlines)
                 if !line.isEmpty {
@@ -479,7 +475,7 @@ struct SceneMapView: View {
                 }
             }
         }
-        return "Page \(tag.page), Line \(tag.startLine)"
+        return "Page \(tag.startPage), Line \(tag.startLine)"
     }
 
     //Stores emotion id and the percentage that the emotion appears in

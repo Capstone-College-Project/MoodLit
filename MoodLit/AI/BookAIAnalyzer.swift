@@ -14,669 +14,881 @@
 
 import Foundation
 
+
+/// Pass 1 v2 — prose-based scene segmentation response.
+/// The AI returns scene boundaries as quoted opening phrases that
+/// Swift then maps back to line indices.
+struct AIProseScenesResponse: Codable {
+    let scenes: [AIProseScene]
+}
+
+struct AIProseScene: Codable {
+    let sceneIndex: Int
+    let openingPhrase: String     // a short quoted phrase that starts this scene
+    let sceneSummary: String
+}
+
 // MARK: - Errors
 
-enum BookAIAnalyzerError: LocalizedError {
-    case noPages
-    case noResolvedTags
-
+enum ChapterAnalyzerError: LocalizedError {
+    case noChapters
+    case invalidChapterIndex
+    case noStoryContent
+    case segmentationFailed
+    case classificationFailed
+    case musicPromptGenerationFailed
+    case noScenesProduced
+    
     var errorDescription: String? {
         switch self {
-        case .noPages:        return "This book has no pages to analyse."
-        case .noResolvedTags: return "AI finished but produced no valid tags."
+        case .noChapters: return "This book has no chapters to analyze."
+        case .invalidChapterIndex: return "The selected chapter is invalid."
+        case .noStoryContent: return "This chapter has no story content after filtering metadata."
+        case .segmentationFailed: return "Pass 1 (segmentation) failed to produce scenes."
+        case .classificationFailed: return "Pass 2 (classification) failed to assign emotions."
+        case .musicPromptGenerationFailed: return "Pass 3 (music prompts) failed to generate descriptions."
+        case .noScenesProduced: return "No valid scenes were produced for this chapter."
         }
     }
 }
 
-// MARK: - Internal pipeline models
+// MARK: - Internal Pipeline Types
 
-private struct SceneSegment: Codable {
-    let chapterIndex: Int
+/// Maps a flat global line index to its real (page, line) position in the chapter.
+private struct LineAddress {
+    let globalIndex: Int
+    let pageNumber: Int
+    let lineInPage: Int
+    let text: String
+}
+
+/// A scene with resolved page+line positions, before classification.
+private struct ResolvedScene {
     let sceneIndex: Int
     let startPage: Int
     let startLine: Int
     let endPage: Int
     let endLine: Int
-    let sceneSummary: String
+    let summary: String
+    let excerpt: String  // first ~8 lines, used for classification context
 }
 
-private struct SegmentationResponse: Codable {
-    let scenes: [SceneSegment]
-}
+// MARK: - ChapterAnalyzer
 
-private struct SceneEmotion: Codable {
-    let chapterIndex: Int
-    let sceneIndex: Int
-    let categoryName: String
-    let intensityLevel: Int
-    let reasoning: String
-}
-
-private struct ClassificationResponse: Codable {
-    let classifications: [SceneEmotion]
-}
-
-// MARK: - BookAIAnalyzer
-
-final class BookAIAnalyzer {
-
-    // MARK: - Public entry point
-
-    func analyzeEntireBook(book: Book, playlist: Playlist) async throws {
-        let pages = book.allPages
-        guard !pages.isEmpty else { throw BookAIAnalyzerError.noPages }
-
-        let allowedCategories = playlist.emotions.map { $0.categoryName }
-        let chapters = book.chapters
-
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("🤖 CHAPTER-BY-CHAPTER AI ANALYSIS STARTED")
-        print("📖 \(book.title)  (\(chapters.count) chapters, \(pages.count) pages)")
-        print("🎵 Playlist: \(playlist.name)")
-        print("🏷  Categories: \(allowedCategories.joined(separator: " · "))")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-
-        var totalTagsApplied = 0
-        var rollingContext = book.aiContext
-
-        for (chapterIdx, chapter) in chapters.enumerated() {
-            print("\n📖 Chapter \(chapterIdx + 1)/\(chapters.count): \"\(chapter.title)\"")
-
-            let chapterPages = chapter.pages
-
-            // STEP 1: Segment
-            let scenes = await segmentChapter(chapter: chapter, chapterIndex: chapterIdx)
-            if scenes.isEmpty {
-                print("   ⚠️ No scenes found — skipping")
-                continue
-            }
-            print("   ✅ \(scenes.count) scene(s) identified")
-
-            // STEP 2: Classify
-            let classifications = await classifyScenes(
-                scenes,
-                book: book,
-                allowedCategories: allowedCategories,
-                priorContext: rollingContext
-            )
-            if classifications.isEmpty {
-                print("   ⚠️ No classifications returned — skipping")
-                continue
-            }
-            print("   ✅ \(classifications.count) scene(s) classified")
-
-            // STEP 3: Build and save tags immediately
-            let rawTags = buildTags(from: classifications, scenes: scenes, playlist: playlist)
-            print("   🔍 rawTags count: \(rawTags.count), pages: \(Set(rawTags.map{$0.page}).sorted())")
-            print("   🔍 chapterPages: \(chapterPages.map{$0.number})")
-            let filledTags = fillGaps(tags: rawTags, pages: chapterPages, playlist: playlist)
-            print("   🔍 filledTags count: \(filledTags.count)")
-
-            if !filledTags.isEmpty {
-                let bookID = book.id
-                await MainActor.run {
-                    let existingTags = LibraryManager.shared.books
-                        .first { $0.id == bookID }?.sceneTags ?? []
-                    let chapterPageNumbers = Set(chapterPages.map { $0.number })
-                    let kept = existingTags.filter {
-                        !chapterPageNumbers.contains($0.page) || $0.musicOverride != nil
-                    }
-                    LibraryManager.shared.updateSceneTags(for: bookID, tags: kept + filledTags)
-                }
-                totalTagsApplied += filledTags.count
-                print("   💾 Saved \(filledTags.count) tag(s) — total: \(totalTagsApplied)")
-            }
-
-            // Update rolling context
-            let chapterSummary = classifications.suffix(2)
-                .map { "\($0.categoryName) (intensity \($0.intensityLevel)): \($0.reasoning)" }
-                .joined(separator: " ")
-            rollingContext = buildRollingContext(
-                previousContext: rollingContext,
-                aiSummary: "Ch\(chapterIdx + 1): \(chapterSummary)"
-            )
-            let contextSnapshot = rollingContext
-            let bookID = book.id
-            await MainActor.run {
-                LibraryManager.shared.updateAIContext(for: bookID, context: contextSnapshot)
-            }
+final class ChapterAnalyzer {
+    
+    // MARK: - Public API
+    
+    /// Runs the full 3-pass pipeline on a single chapter:
+    ///   Pass 1 — segment chapter into scenes
+    ///   Pass 2 — classify each scene's emotion
+    ///   Pass 3 — generate music prompts for each scene
+    /// Saves all results to the book in one batch.
+    func analyze(book: Book, playlist: Playlist, chapterIndex: Int) async throws {
+        guard !book.chapters.isEmpty else {
+            throw ChapterAnalyzerError.noChapters
         }
-
-        print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        if totalTagsApplied == 0 {
-            print("❌ No tags produced.")
-            throw BookAIAnalyzerError.noResolvedTags
-        } else {
-            print("📊 DONE: \(totalTagsApplied) total tags applied")
+        guard chapterIndex >= 0 && chapterIndex < book.chapters.count else {
+            throw ChapterAnalyzerError.invalidChapterIndex
         }
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    }
-
-    // Backward-compat shim
-    func analyze(book: Book, playlist: Playlist, startPageIndex: Int) async throws {
-        try await analyzeEntireBook(book: book, playlist: playlist)
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // STEP 1 — Segment one chapter into scenes
-    // ═══════════════════════════════════════════════════════════════════════
-
-    // MARK: - Public: analyse a single chapter by index
-    // Used by the chapter picker sheet so the user can choose specific chapters.
-    func analyzeChapter(at chapterIndex: Int, book: Book, playlist: Playlist) async {
-        guard chapterIndex < book.chapters.count else { return }
+        
         let chapter = book.chapters[chapterIndex]
         let allowedCategories = playlist.emotions.map { $0.categoryName }
-
-        print("📖 Analysing section \(chapterIndex + 1): \"\(chapter.title)\"")
-
-        let scenes = await segmentChapter(chapter: chapter, chapterIndex: chapterIndex)
-        guard !scenes.isEmpty else { print("   ⚠️ No scenes found"); return }
-
-        let classifications = await classifyScenes(
-            scenes, book: book,
-            allowedCategories: allowedCategories,
-            priorContext: book.aiContext
+        
+        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print("🤖 CHAPTER ANALYSIS — 3-PASS PIPELINE")
+        print("📖 Book: \(book.title)")
+        print("📑 Chapter \(chapterIndex + 1) of \(book.chapters.count): \(chapter.title)")
+        print("📄 Pages: \(chapter.pages.count)")
+        print("🎵 Playlist: \(playlist.name) (\(allowedCategories.count) categories)")
+        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        
+        // ── Build flat line list (filter metadata) ──
+        let lineAddresses = buildLineAddresses(chapter: chapter)
+        
+        guard !lineAddresses.isEmpty else {
+            throw ChapterAnalyzerError.noStoryContent
+        }
+        
+        print("\n📝 Story lines after filtering: \(lineAddresses.count)")
+        
+        // ── PASS 1: Segment ──
+        
+        
+        print("\n🔹 PASS 1: Segmenting chapter into scenes...")
+        
+        let scenes: [ResolvedScene]
+        do {
+            scenes = try await runSegmentation(
+                chapter: chapter,
+                lineAddresses: lineAddresses
+            )
+        } catch {
+            print("   ❌ Segmentation error: \(error.localizedDescription)")
+            throw ChapterAnalyzerError.segmentationFailed
+        }
+        
+        guard !scenes.isEmpty else {
+            throw ChapterAnalyzerError.segmentationFailed
+        }
+        
+        print("   ✅ \(scenes.count) scene(s) identified:")
+        for scene in scenes {
+            print("      [\(scene.sceneIndex)] P\(scene.startPage)L\(scene.startLine) → P\(scene.endPage)L\(scene.endLine)")
+            print("           \(scene.summary)")
+        }
+        
+        // ── PASS 2: Classify ──
+        print("\n🔹 PASS 2: Classifying scene emotions...")
+        
+        let classifications: [AISceneClassification]
+        do {
+            classifications = try await runClassification(
+                scenes: scenes,
+                allowedCategories: allowedCategories,
+            )
+        } catch {
+            print("   ❌ Classification error: \(error.localizedDescription)")
+            throw ChapterAnalyzerError.classificationFailed
+        }
+        
+        guard !classifications.isEmpty else {
+            throw ChapterAnalyzerError.classificationFailed
+        }
+        
+        print("   ✅ \(classifications.count) scene(s) classified:")
+        for c in classifications {
+            print("      [\(c.sceneIndex)] \(c.categoryName) intensity \(c.intensityLevel)")
+        }
+        
+        // ── PASS 3: Generate Music Prompts ──
+        print("\n🔹 PASS 3: Generating music prompts for streaming...")
+        
+        let musicPrompts: [Int: String]
+        do {
+            musicPrompts = try await runMusicPromptGeneration(
+                scenes: scenes,
+                classifications: classifications
+            )
+            print("   ✅ \(musicPrompts.count) music prompt(s) generated:")
+            for (idx, prompt) in musicPrompts.sorted(by: { $0.key < $1.key }) {
+                print("      [\(idx)] \(prompt)")
+            }
+        } catch {
+            // Pass 3 failure is non-fatal — we still save emotion tags without prompts
+            print("   ⚠️ Music prompt generation failed: \(error.localizedDescription)")
+            print("   ⚠️ Continuing with emotion tags only — stream mode will fall back to playlist")
+            musicPrompts = [:]
+        }
+        
+        // ── BUILD TAGS ──
+        let tags = buildSceneTags(
+            scenes: scenes,
+            classifications: classifications,
+            musicPrompts: musicPrompts,
+            playlist: playlist
         )
-        guard !classifications.isEmpty else { print("   ⚠️ No classifications"); return }
-
-        let rawTags = buildTags(from: classifications, scenes: scenes, playlist: playlist)
-        print("   🔍 rawTags: \(rawTags.count), pages in tags: \(Set(rawTags.map{$0.page}).sorted())")
-        print("   🔍 chapter pages: \(chapter.pages.map{$0.number})")
-        let filledTags = fillGaps(tags: rawTags, pages: chapter.pages, playlist: playlist)
-        print("   🔍 filledTags: \(filledTags.count), categories: \(Set(filledTags.map{$0.emotionCategoryID}).count) unique")
-        guard !filledTags.isEmpty else { return }
-
+        
+        guard !tags.isEmpty else {
+            throw ChapterAnalyzerError.noScenesProduced
+        }
+        
+        // ── SAVE TAGS ──
         let bookID = book.id
         let chapterPageNumbers = Set(chapter.pages.map { $0.number })
+        
         await MainActor.run {
-            let existingTags = LibraryManager.shared.books
+            let existing = LibraryManager.shared.books
                 .first { $0.id == bookID }?.sceneTags ?? []
-            let kept = existingTags.filter {
-                !chapterPageNumbers.contains($0.page) || $0.musicOverride != nil
+            
+            // Keep tags that don't touch this chapter at all (preserves other chapters)
+            // and any tags that have a user-set music override
+            let kept = existing.filter { tag in
+                let tagPages = Set(tag.startPage...tag.endPage)
+                let touchesThisChapter = !tagPages.isDisjoint(with: chapterPageNumbers)
+                return !touchesThisChapter || tag.musicOverride != nil
             }
-            LibraryManager.shared.updateSceneTags(for: bookID, tags: kept + filledTags)
+            
+            let merged = (kept + tags).sorted { lhs, rhs in
+                if lhs.startPage != rhs.startPage { return lhs.startPage < rhs.startPage }
+                return lhs.startLine < rhs.startLine
+            }
+            
+            LibraryManager.shared.updateSceneTags(for: bookID, tags: merged)
         }
-        print("   💾 Saved \(filledTags.count) tag(s) for section \(chapterIndex + 1)")
+        
+        // ── REPORT ──
+        print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print("📊 CHAPTER REPORT")
+        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print("  ✅ \(tags.count) scenes saved")
+        print("  🎼 \(musicPrompts.count) music prompts attached")
+        
+        let categoryCounts = Dictionary(grouping: tags, by: { $0.emotionCategoryID })
+        print("\n  🎭 Categories used:")
+        for (catID, ts) in categoryCounts {
+            let catName = playlist.emotions.first(where: { $0.id == catID })?.categoryName ?? "Unknown"
+            print("     \(catName): \(ts.count) scene(s)")
+        }
+        
+        print("\n  📡 API calls: 3 (segmentation + classification + music prompts)")
+        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    }
+    
+    // MARK: - Pass 1 Implementation
+    
+    private func runSegmentation(
+        chapter: Chapter,
+        lineAddresses: [LineAddress]
+    ) async throws -> [ResolvedScene] {
+        
+        let chapterProse = lineAddresses
+            .map { $0.text }
+            .joined(separator: "\n\n")
+        
+        let totalLines = lineAddresses.count
+        let minimumScenes = totalLines > 60 ? 3 : (totalLines > 30 ? 2 : 1)
+        
+        // ── Retry once if the model under-segments ──
+        var bestResponse: AIProseScenesResponse?
+        var bestUsableCount = 0
+        
+        for attempt in 1...2 {
+            let raw = try await OllamaService.shared.segmentChapterIntoScenes(
+                chapterTitle: chapter.title,
+                chapterProse: chapterProse,
+                approximateLineCount: totalLines
+            )
+            
+            // Count how many scenes have valid, matchable opening phrases
+            let usableCount = raw.scenes.filter { scene in
+                let trimmed = scene.openingPhrase.trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                // Reject placeholders
+                if trimmed == "..." || trimmed == "…" || trimmed.isEmpty { return false }
+                if trimmed.split(separator: " ").count < 4 { return false }
+                if trimmed.filter({ $0.isLetter }).count < 10 { return false }
+                
+                // Reject system prompt echoes
+                let lower = trimmed.lowercased()
+                if lower.hasPrefix("you divide") { return false }
+                if lower.hasPrefix("output json") { return false }
+                if lower.hasPrefix("a scene is") { return false }
+                
+                // Must actually match a line in the chapter
+                return findLineMatchingPhrase(trimmed, in: lineAddresses) != nil
+            }.count
+            
+            if usableCount >= minimumScenes {
+                bestResponse = raw
+                break
+            }
+            
+            // Keep the better attempt even if both fail the minimum
+            if usableCount > bestUsableCount {
+                bestUsableCount = usableCount
+                bestResponse = raw
+            }
+            
+            if attempt == 1 {
+                print("   ⚠️ Pass 1 attempt 1: only \(usableCount) usable scene(s) (need \(minimumScenes)). Retrying...")
+            }
+        }
+        
+        guard let response = bestResponse else {
+            print("   ❌ Both attempts failed. Falling back to single scene.")
+            return [fallbackSingleScene(lineAddresses: lineAddresses)]
+        }
+        
+        // ── Validate and filter scenes ──
+        let validResponseScenes = response.scenes.filter { scene in
+            let trimmed = scene.openingPhrase.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed == "..." || trimmed == "…" || trimmed.isEmpty { return false }
+            if trimmed.split(separator: " ").count < 4 { return false }
+            if trimmed.filter({ $0.isLetter }).count < 10 { return false }
+            
+            let lower = trimmed.lowercased()
+            if lower.hasPrefix("you divide") { return false }
+            if lower.hasPrefix("output json") { return false }
+            if lower.hasPrefix("a scene is") { return false }
+            
+            return true
+        }
+        
+        if validResponseScenes.count < response.scenes.count {
+            print("   ⚠️ Rejected \(response.scenes.count - validResponseScenes.count) scenes with invalid opening phrases")
+        }
+        
+        // ── STEP 1: Map each opening phrase to a line index ──
+        var sceneStartLines: [(sceneIndex: Int, lineIndex: Int, summary: String)] = []
+        
+        for scene in validResponseScenes {
+            if let matchedLine = findLineMatchingPhrase(scene.openingPhrase, in: lineAddresses) {
+                sceneStartLines.append((
+                    sceneIndex: scene.sceneIndex,
+                    lineIndex: matchedLine,
+                    summary: scene.sceneSummary
+                ))
+            } else {
+                print("   ⚠️ Could not match phrase '\(scene.openingPhrase.prefix(40))...' to any line — skipping")
+            }
+        }
+        
+        guard !sceneStartLines.isEmpty else {
+            print("   ❌ No phrases matched. Falling back to single scene.")
+            return [fallbackSingleScene(lineAddresses: lineAddresses)]
+        }
+        
+        // ── STEP 2: Sort, dedupe, enforce order ──
+        var sorted = sceneStartLines.sorted { $0.lineIndex < $1.lineIndex }
+        
+        var deduped: [(sceneIndex: Int, lineIndex: Int, summary: String)] = []
+        for scene in sorted {
+            if deduped.last?.lineIndex != scene.lineIndex {
+                deduped.append(scene)
+            }
+        }
+        sorted = deduped
+        
+        // Force first scene to start at 0
+        if sorted[0].lineIndex > 0 {
+            sorted[0] = (sceneIndex: 0, lineIndex: 0, summary: sorted[0].summary)
+        }
+        
+        // ── STEP 3: Derive endLine for each scene ──
+        var resolved: [ResolvedScene] = []
+        
+        for (idx, scene) in sorted.enumerated() {
+            let start = scene.lineIndex
+            let end: Int
+            
+            if idx + 1 < sorted.count {
+                end = sorted[idx + 1].lineIndex - 1
+            } else {
+                end = totalLines - 1
+            }
+            
+            guard end >= start else {
+                print("   ⚠️ Invalid scene range \(start)-\(end) — skipping")
+                continue
+            }
+            
+            let startAddr = lineAddresses[start]
+            let endAddr = lineAddresses[end]
+            let excerpt = buildExcerpt(from: lineAddresses, start: start, end: end)
+            
+            resolved.append(ResolvedScene(
+                sceneIndex: idx,
+                startPage: startAddr.pageNumber,
+                startLine: startAddr.lineInPage,
+                endPage: endAddr.pageNumber,
+                endLine: endAddr.lineInPage,
+                summary: scene.summary,
+                excerpt: excerpt
+            ))
+        }
+        
+        // ── STEP 4: Merge tiny scenes into their predecessors ──
+        let minSceneLength = 10
+        var merged: [ResolvedScene] = []
+        
+        for scene in resolved {
+            let sceneLength = (scene.endPage == scene.startPage)
+                ? scene.endLine - scene.startLine + 1
+                : 100
+            
+            if sceneLength < minSceneLength, let last = merged.last {
+                merged[merged.count - 1] = ResolvedScene(
+                    sceneIndex: last.sceneIndex,
+                    startPage: last.startPage,
+                    startLine: last.startLine,
+                    endPage: scene.endPage,
+                    endLine: scene.endLine,
+                    summary: last.summary,
+                    excerpt: last.excerpt
+                )
+            } else {
+                merged.append(scene)
+            }
+        }
+        
+        // Re-index after merging
+        let final = merged.enumerated().map { idx, scene in
+            ResolvedScene(
+                sceneIndex: idx,
+                startPage: scene.startPage,
+                startLine: scene.startLine,
+                endPage: scene.endPage,
+                endLine: scene.endLine,
+                summary: scene.summary,
+                excerpt: scene.excerpt
+            )
+        }
+        
+        return splitOversizedScenes(final, lineAddresses: lineAddresses)
+    }
+    
+    /// Splits any scene longer than maxLines into roughly equal sub-scenes.
+    /// Preserves the original scene's summary for the first sub-scene.
+    private func splitOversizedScenes(
+        _ scenes: [ResolvedScene],
+        lineAddresses: [LineAddress],
+        maxLines: Int = 25
+    ) -> [ResolvedScene] {
+        var result: [ResolvedScene] = []
+        
+        for scene in scenes {
+            // Calculate scene length in global line indices
+            guard let startGlobal = lineAddresses.firstIndex(where: {
+                $0.pageNumber == scene.startPage && $0.lineInPage == scene.startLine
+            }),
+            let endGlobal = lineAddresses.firstIndex(where: {
+                $0.pageNumber == scene.endPage && $0.lineInPage == scene.endLine
+            }) else {
+                result.append(scene)
+                continue
+            }
+            
+            let length = endGlobal - startGlobal + 1
+            
+            if length <= maxLines {
+                result.append(scene)
+                continue
+            }
+            
+            // Split into chunks of ~maxLines
+            let chunkCount = max(2, (length + maxLines - 1) / maxLines)
+            let chunkSize = length / chunkCount
+            
+            for i in 0..<chunkCount {
+                let chunkStart = startGlobal + (i * chunkSize)
+                let chunkEnd: Int
+                if i == chunkCount - 1 {
+                    chunkEnd = endGlobal  // last chunk gets the remainder
+                } else {
+                    chunkEnd = chunkStart + chunkSize - 1
+                }
+                
+                let startAddr = lineAddresses[chunkStart]
+                let endAddr = lineAddresses[chunkEnd]
+                let excerpt = buildExcerpt(from: lineAddresses, start: chunkStart, end: chunkEnd)
+                
+                // First sub-scene keeps the AI summary, others get a generic one
+                let summary = (i == 0) ? scene.summary : "Continuation of scene"
+                
+                result.append(ResolvedScene(
+                    sceneIndex: 0,  // will be reindexed later
+                    startPage: startAddr.pageNumber,
+                    startLine: startAddr.lineInPage,
+                    endPage: endAddr.pageNumber,
+                    endLine: endAddr.lineInPage,
+                    summary: summary,
+                    excerpt: excerpt
+                ))
+            }
+        }
+        
+        // Reindex
+        return result.enumerated().map { idx, scene in
+            ResolvedScene(
+                sceneIndex: idx,
+                startPage: scene.startPage,
+                startLine: scene.startLine,
+                endPage: scene.endPage,
+                endLine: scene.endLine,
+                summary: scene.summary,
+                excerpt: scene.excerpt
+            )
+        }
     }
 
-    private func segmentChapter(chapter: Chapter, chapterIndex: Int) async -> [SceneSegment] {
-        // Build a flat numbered list of all story lines in the chapter.
-        // We avoid page numbers entirely — the AI gets global line indices (0, 1, 2...)
-        // and we map them back to pages ourselves in buildTags.
-        let maxLines = 150
-        var allLines: [(globalIdx: Int, pageNumber: Int, lineInPage: Int, text: String)] = []
+    
+    
+    /// Finds the first line whose text contains the given phrase.
+    /// Matching is done case-insensitively, ignoring quotes and extra whitespace.
+    private func findLineMatchingPhrase(_ phrase: String, in lineAddresses: [LineAddress]) -> Int? {
+        let normalizedPhrase = normalize(phrase)
+        guard !normalizedPhrase.isEmpty else { return nil }
+        
+        // 1. Try exact substring match
+        for (idx, addr) in lineAddresses.enumerated() {
+            if normalize(addr.text).contains(normalizedPhrase) {
+                return idx
+            }
+        }
+        
+        // 2. Try progressively shorter prefixes (first 8, 5, 3 words)
+        let words = normalizedPhrase.split(separator: " ").map(String.init)
+        for wordCount in [8, 5, 3] {
+            guard words.count >= wordCount else { continue }
+            let prefix = words.prefix(wordCount).joined(separator: " ")
+            guard prefix.count >= 8 else { continue }
+            
+            for (idx, addr) in lineAddresses.enumerated() {
+                if normalize(addr.text).contains(prefix) {
+                    return idx
+                }
+            }
+        }
+        
+        // 3. Fuzzy fallback: find the line that shares the most words with the phrase
+        //    Only triggers if the phrase has enough substance to be meaningful
+        guard words.count >= 4 else { return nil }
+        
+        let phraseWords = Set(words)
+        var bestIdx: Int? = nil
+        var bestOverlap = 0
+        
+        for (idx, addr) in lineAddresses.enumerated() {
+            let lineWords = Set(normalize(addr.text).split(separator: " ").map(String.init))
+            let overlap = phraseWords.intersection(lineWords).count
+            
+            if overlap > bestOverlap {
+                bestOverlap = overlap
+                bestIdx = idx
+            }
+        }
+        
+        // Require at least 60% word overlap to accept a fuzzy match
+        let threshold = max(3, Int(Double(phraseWords.count) * 0.6))
+        if bestOverlap >= threshold {
+            return bestIdx
+        }
+        
+        return nil
+    }
 
+    /// Normalizes text for phrase matching — lowercases, collapses whitespace,
+    /// strips quote marks and common punctuation that AIs sometimes alter.
+    private func normalize(_ text: String) -> String {
+        let lowered = text.lowercased()
+        var cleaned = lowered
+            .replacingOccurrences(of: "\u{201C}", with: "\"")
+            .replacingOccurrences(of: "\u{201D}", with: "\"")
+            .replacingOccurrences(of: "\u{2018}", with: "'")
+            .replacingOccurrences(of: "\u{2019}", with: "'")
+            .replacingOccurrences(of: "\u{2014}", with: "-")
+            .replacingOccurrences(of: "\u{2013}", with: "-")
+            .replacingOccurrences(of: "\u{2026}", with: "")    // unicode ellipsis …
+        
+        // Collapse whitespace
+        cleaned = cleaned.replacingOccurrences(
+            of: #"\s+"#,
+            with: " ",
+            options: .regularExpression
+        )
+        
+        // Strip any trailing ellipsis / dots / truncation markers
+        // This removes "....", "...", "..", "." and any trailing whitespace
+        cleaned = cleaned.replacingOccurrences(
+            of: #"[\s\.]+$"#,
+            with: "",
+            options: .regularExpression
+        )
+        
+        // Strip trailing punctuation that AIs sometimes add (commas, quotes, etc.)
+        cleaned = cleaned.replacingOccurrences(
+            of: #"[,;:\"\']+$"#,
+            with: "",
+            options: .regularExpression
+        )
+        
+        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Builds a context excerpt by sampling from throughout the scene,
+    /// not just the opening. Gives Pass 2 a better feel for scene tone.
+    private func buildExcerpt(from lineAddresses: [LineAddress], start: Int, end: Int) -> String {
+        let length = end - start + 1
+        
+        // If scene is short, use all of it
+        guard length > 6 else {
+            return lineAddresses[start...end]
+                .map { $0.text.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+        }
+        
+        // Otherwise sample: first 3 lines + middle 2 + last 2
+        let middle = start + length / 2
+        let indices = [
+            start, start + 1, start + 2,
+            middle, middle + 1,
+            end - 1, end
+        ].filter { $0 >= start && $0 <= end }
+        
+        let uniqueIndices = Array(Set(indices)).sorted()
+        return uniqueIndices
+            .map { lineAddresses[$0].text.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ... ")
+    }
+
+    private func fallbackSingleScene(lineAddresses: [LineAddress]) -> ResolvedScene {
+        let first = lineAddresses.first!
+        let last = lineAddresses.last!
+        let excerpt = lineAddresses.prefix(8)
+            .map { $0.text.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return ResolvedScene(
+            sceneIndex: 0,
+            startPage: first.pageNumber,
+            startLine: first.lineInPage,
+            endPage: last.pageNumber,
+            endLine: last.lineInPage,
+            summary: "Full chapter",
+            excerpt: excerpt
+        )
+    }
+    
+    // MARK: - Pass 2 Implementation
+    private func runClassification(
+        scenes: [ResolvedScene],
+        allowedCategories: [String]
+    ) async throws -> [AISceneClassification] {
+        
+        // Run all scene classifications in parallel
+        let results = await withTaskGroup(of: AISceneClassification?.self) { group in
+            for scene in scenes {
+                group.addTask {
+                    do {
+                        return try await self.classifyOneScene(
+                            scene: scene,
+                            allowedCategories: allowedCategories
+                        )
+                    } catch {
+                        print("   ⚠️ Scene \(scene.sceneIndex) classification failed: \(error.localizedDescription)")
+                        return nil
+                    }
+                }
+            }
+            
+            var collected: [AISceneClassification] = []
+            for await result in group {
+                if let r = result { collected.append(r) }
+            }
+            return collected
+        }
+        
+        // Fill any scenes that failed with a safe default
+        let validIndices = Set(scenes.map { $0.sceneIndex })
+        let doneIndices = Set(results.map { $0.sceneIndex })
+        let missing = validIndices.subtracting(doneIndices).sorted()
+        
+        var final = results
+        for idx in missing {
+            print("   ⚠️ Scene \(idx) missing — defaulting to \(allowedCategories.first ?? "Neutral") intensity 1")
+            final.append(AISceneClassification(
+                sceneIndex: idx,
+                categoryName: allowedCategories.first ?? "Neutral",
+                intensityLevel: 1
+            ))
+        }
+        
+        return final.sorted { $0.sceneIndex < $1.sceneIndex }
+    }
+
+    /// Classifies a single scene. The AI never sees multiple scenes at once,
+    /// so it can't confuse indices or pollute one scene's emotion with another's.
+    private func classifyOneScene(
+        scene: ResolvedScene,
+        allowedCategories: [String]
+    ) async throws -> AISceneClassification {
+        let sceneText = """
+        Summary: \(scene.summary)
+        Excerpt: \(scene.excerpt)
+        """
+        
+        let response = try await OllamaService.shared.classifyOneSceneEmotion(
+            sceneText: sceneText,
+            sceneIndex: scene.sceneIndex,
+            allowedCategories: allowedCategories
+        )
+        
+        return response
+    }
+    
+    // MARK: - Pass 3 Implementation
+    private func runMusicPromptGeneration(
+        scenes: [ResolvedScene],
+        classifications: [AISceneClassification]
+    ) async throws -> [Int: String] {
+        
+        var classByIndex: [Int: AISceneClassification] = [:]
+        for c in classifications {
+            classByIndex[c.sceneIndex] = c
+        }
+        
+        let scenesText = scenes.compactMap { scene -> String? in
+            guard let classification = classByIndex[scene.sceneIndex] else { return nil }
+            return """
+            SCENE \(scene.sceneIndex):
+              Summary: \(scene.summary)
+              Emotion: \(classification.categoryName)
+              Intensity: \(classification.intensityLevel)
+            """
+        }.joined(separator: "\n\n")
+        
+        guard !scenesText.isEmpty else { return [:] }
+        
+        let response = try await OllamaService.shared.generateMusicPromptsForScenes(
+            scenesText: scenesText
+        )
+        
+        // ── Safety net: dedupe, drop invalid indices, fill missing ──
+        let validIndices = Set(scenes.map { $0.sceneIndex })
+        var promptByIndex: [Int: String] = [:]
+        
+        for prompt in response.prompts {
+            guard validIndices.contains(prompt.sceneIndex) else { continue }
+            if promptByIndex[prompt.sceneIndex] == nil {
+                promptByIndex[prompt.sceneIndex] = prompt.musicPrompt
+            }
+        }
+        
+        // For any scene the AI skipped, generate a generic fallback prompt from its emotion
+        let missing = validIndices.subtracting(promptByIndex.keys).sorted()
+        if !missing.isEmpty {
+            print("   ⚠️ Pass 3 missed scenes \(missing) — using generic fallback prompts")
+            for idx in missing {
+                guard let classification = classByIndex[idx] else { continue }
+                promptByIndex[idx] = genericPrompt(
+                    for: classification.categoryName,
+                    intensity: classification.intensityLevel
+                )
+            }
+        }
+        
+        return promptByIndex
+    }
+
+    /// Builds a serviceable music prompt from emotion + intensity when Pass 3 drops a scene.
+    private func genericPrompt(for category: String, intensity: Int) -> String {
+        let texture: String
+        switch intensity {
+        case 1: texture = "sparse, minimal, 60 BPM, subtle and understated"
+        case 2: texture = "moderate density, 90 BPM, clearly present mood"
+        default: texture = "dense layered, 110 BPM, full expression"
+        }
+        
+        let base: String
+        switch category.lowercased() {
+        case let s where s.contains("battle") || s.contains("rage"):
+            base = "driving percussion, low brass hits, aggressive strings"
+        case let s where s.contains("sad") || s.contains("mourning") || s.contains("death"):
+            base = "mournful cello, soft piano, distant reverb"
+        case let s where s.contains("happy") || s.contains("joy") || s.contains("comedy"):
+            base = "warm strings, light woodwinds, playful rhythm"
+        case let s where s.contains("romance") || s.contains("love"):
+            base = "gentle piano, warm strings, intimate melody"
+        case let s where s.contains("mystery") || s.contains("scary") || s.contains("dark"):
+            base = "haunting strings, dissonant piano, low drones"
+        case let s where s.contains("epic") || s.contains("heroic"):
+            base = "orchestral strings, powerful brass, triumphant theme"
+        case let s where s.contains("calm") || s.contains("nature"):
+            base = "ambient pads, soft acoustic guitar, gentle atmosphere"
+        case let s where s.contains("tension") || s.contains("thriller"):
+            base = "string tremolos, rising drones, suspenseful pulse"
+        case let s where s.contains("magic") || s.contains("wonder"):
+            base = "ethereal harp, shimmering synths, airy choir"
+        default:
+            base = "orchestral textures, balanced instrumentation"
+        }
+        
+        return "\(base), \(texture)"
+    }
+    
+    // MARK: - Tag Building
+    
+    private func buildSceneTags(
+        scenes: [ResolvedScene],
+        classifications: [AISceneClassification],
+        musicPrompts: [Int: String],
+        playlist: Playlist
+    ) -> [SceneTag] {
+        
+        var classByIndex: [Int: AISceneClassification] = [:]
+        for c in classifications {
+            classByIndex[c.sceneIndex] = c
+        }
+        
+        var tags: [SceneTag] = []
+        
+        for scene in scenes {
+            guard let classification = classByIndex[scene.sceneIndex] else {
+                print("   ⚠️ Scene \(scene.sceneIndex) has no classification — skipped")
+                continue
+            }
+            
+            guard let category = playlist.emotions.first(where: {
+                $0.categoryName.lowercased() == classification.categoryName.lowercased()
+            }) else {
+                print("   ⚠️ Unknown category '\(classification.categoryName)' — scene \(scene.sceneIndex) skipped")
+                continue
+            }
+            
+            // ONE tag per scene with all three passes' data attached
+            let tag = SceneTag(
+                id: UUID(),
+                startPage: scene.startPage,
+                startLine: scene.startLine,
+                endPage: scene.endPage,
+                endLine: scene.endLine,
+                emotionCategoryID: category.id,
+                intensityLevel: max(1, min(3, classification.intensityLevel)),
+                musicOverride: nil,
+                musicPrompt: musicPrompts[scene.sceneIndex],   // may be nil if Pass 3 failed
+                sceneSummary: scene.summary
+            )
+            tags.append(tag)
+        }
+        
+        return tags.sorted { lhs, rhs in
+            if lhs.startPage != rhs.startPage { return lhs.startPage < rhs.startPage }
+            return lhs.startLine < rhs.startLine
+        }
+    }
+    
+    // MARK: - Line Address Building (with metadata filtering)
+    
+    private func buildLineAddresses(chapter: Chapter) -> [LineAddress] {
+        var addresses: [LineAddress] = []
+        var globalIdx = 0
+        
         for page in chapter.pages {
             let storyLines = filterMetadata(from: page.lines)
             for (lineInPage, text) in storyLines.enumerated() {
-                guard allLines.count < maxLines else { break }
-                allLines.append((
-                    globalIdx: allLines.count,
+                addresses.append(LineAddress(
+                    globalIndex: globalIdx,
                     pageNumber: page.number,
                     lineInPage: lineInPage,
                     text: text
                 ))
+                globalIdx += 1
             }
-            if allLines.count >= maxLines { break }
         }
-
-        guard !allLines.isEmpty else {
-            print("   ⚠️ Chapter \(chapterIndex) has no story content after filtering")
-            return []
-        }
-
-        let truncated = allLines.count >= maxLines
-        let flatText = allLines.map { "  \($0.globalIdx): \($0.text)" }.joined(separator: "\n")
-        let suffix = truncated ? "\n[truncated at line \(maxLines - 1)]" : ""
-        let chapterText = "CHAPTER — \(chapter.title)\nTotal lines: 0 to \(allLines.count - 1)\n\(flatText)\(suffix)"
-
-        let systemPrompt = """
-        You are a narrative structure analyst. Find every scene boundary in this chapter.
-
-        A SCENE BOUNDARY occurs when:
-        • Location changes — characters move somewhere different
-        • Time jumps forward or backward
-        • Emotional tone shifts significantly (calm → tense, grief → action)
-        • Point-of-view character changes
-        • A major plot beat concludes and a new one begins
-
-        RULES:
-        - Lines are numbered from 0. Use ONLY the line numbers shown in the input.
-        - startLine and endLine are the global line numbers (the numbers before the colon).
-        - No scenes shorter than 3 lines.
-        - Skip metadata lines — only tag story narration, dialogue, and description.
-        - sceneIndex is 0-based (first scene = 0, second = 1, etc).
-        - Every line must be covered — no gaps between scenes.
-        - The last scene must end at the last line number shown.
-
-        Return ONLY valid JSON. No markdown, no explanation.
-        """
-
-        let schema: JSONValue = .object([
-            "type": .string("object"),
-            "properties": .object([
-                "scenes": .object([
-                    "type": .string("array"),
-                    "items": .object([
-                        "type": .string("object"),
-                        "properties": .object([
-                            "sceneIndex":   .object(["type": .string("integer")]),
-                            "startLine":    .object(["type": .string("integer")]),
-                            "endLine":      .object(["type": .string("integer")]),
-                            "sceneSummary": .object(["type": .string("string")])
-                        ]),
-                        "required": .array([
-                            .string("sceneIndex"),
-                            .string("startLine"),
-                            .string("endLine"),
-                            .string("sceneSummary")
-                        ]),
-                        "additionalProperties": .bool(false)
-                    ])
-                ])
-            ]),
-            "required": .array([.string("scenes")]),
-            "additionalProperties": .bool(false)
-        ])
-
-        let prompt = """
-        Find all scene boundaries in the chapter below.
-        Use the line numbers exactly as shown (the number before the colon).
-
-        \(chapterText)
-        """
-
-        // Simplified response model — no page numbers
-        struct FlatScene: Codable {
-            let sceneIndex: Int
-            let startLine: Int
-            let endLine: Int
-            let sceneSummary: String
-        }
-        struct FlatSegmentationResponse: Codable {
-            let scenes: [FlatScene]
-        }
-
-        do {
-            let raw = try await OllamaService.shared.generate(
-                system: systemPrompt,
-                prompt: prompt,
-                schema: schema
-            )
-            guard let data = raw.data(using: .utf8) else { return [] }
-            let decoded = try JSONDecoder().decode(FlatSegmentationResponse.self, from: data)
-
-            // Map flat line indices back to real page numbers and per-page line indices
-            return decoded.scenes.compactMap { flat -> SceneSegment? in
-                guard flat.startLine <= flat.endLine,
-                      flat.startLine < allLines.count,
-                      flat.endLine < allLines.count else { return nil }
-
-                let startEntry = allLines[flat.startLine]
-                let endEntry   = allLines[flat.endLine]
-
-                return SceneSegment(
-                    chapterIndex: chapterIndex,
-                    sceneIndex: flat.sceneIndex,
-                    startPage: startEntry.pageNumber,
-                    startLine: startEntry.lineInPage,
-                    endPage: endEntry.pageNumber,
-                    endLine: endEntry.lineInPage,
-                    sceneSummary: flat.sceneSummary
-                )
-            }
-        } catch {
-            print("   ⚠️ Segmentation error ch\(chapterIndex): \(error.localizedDescription)")
-            return []
-        }
+        
+        return addresses
     }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // STEP 2 — Classify scenes by emotion
-    // ═══════════════════════════════════════════════════════════════════════
-
-    private func classifyScenes(
-        _ scenes: [SceneSegment],
-        book: Book,
-        allowedCategories: [String],
-        priorContext: String
-    ) async -> [SceneEmotion] {
-
-        var allClassifications: [SceneEmotion] = []
-        let batchSize = 5
-        var idx = 0
-
-        while idx < scenes.count {
-            let batchEnd = min(idx + batchSize, scenes.count)
-            let batch = Array(scenes[idx..<batchEnd])
-
-            let sceneDescriptions = batch.map { scene in
-                let excerpt = extractExcerpt(from: book, scene: scene, maxLines: 8)
-                return """
-                SCENE ch\(scene.chapterIndex)-s\(scene.sceneIndex):
-                  Summary: \(scene.sceneSummary)
-                  Pages: \(scene.startPage) line \(scene.startLine) to \(scene.endPage) line \(scene.endLine)
-                  Excerpt: \(excerpt)
-                """
-            }.joined(separator: "\n\n")
-
-            let contextBlock = priorContext.isEmpty
-                ? "This is the start of the book. Be conservative with intensity (1-2)."
-                : "Recent emotional context:\n\(priorContext)"
-
-            let systemPrompt = """
-            You are an expert at identifying the emotional tone of literary scenes for a reading-with-music app.
-            Assign one emotional music category and an intensity level to each scene.
-
-            ALLOWED CATEGORIES (use EXACTLY as written):
-            \(allowedCategories.joined(separator: ", "))
-
-            HOW TO CHOOSE — read the EXCERPT carefully, then ask:
-            1. What does the point-of-view character FEEL in THIS specific scene?
-            2. What would a film composer score THIS moment as?
-            3. What tone does the prose create in the reader of THIS scene?
-
-            CRITICAL RULES:
-            - You MUST base your answer on the TEXT EXCERPT provided, not just the summary.
-            - If scenes have DIFFERENT excerpts and DIFFERENT summaries, they likely need DIFFERENT categories.
-            - Do NOT assign the same category to every scene just because they are in the same chapter.
-            - Each scene must be evaluated INDEPENDENTLY on its own excerpt.
-
-            AVOID THESE MISTAKES:
-            - Talking ABOUT a battle is not Battle / Rage. Use Tension / Thriller or Sad / Mourning.
-            - Quiet travel is not Epic / Heroic. Use Calm / Nature.
-            - Fearful escape = Tension / Thriller, not Epic / Heroic.
-            - Epic / Heroic needs real triumph or bravery from the POV character.
-            - A happy childhood memory = Happy / Joy or Romance / Love, NOT Sad / Mourning.
-            - A character meeting someone kind = Romance / Love or Happy / Joy, NOT Sad / Mourning.
-            - Calm description of family life = Calm / Nature or Happy / Joy, NOT Sad / Mourning.
-
-            INTENSITY: 1 = subtle, 2 = building, 3 = peak.
-            CONTINUITY: Only keep the same category as the previous scene if the TEXT supports the same mood.
-
-            Return ONLY valid JSON. No preamble, no markdown.
-            """
-
-            let schema: JSONValue = .object([
-                "type": .string("object"),
-                "properties": .object([
-                    "classifications": .object([
-                        "type": .string("array"),
-                        "items": .object([
-                            "type": .string("object"),
-                            "properties": .object([
-                                "chapterIndex":   .object(["type": .string("integer")]),
-                                "sceneIndex":     .object(["type": .string("integer")]),
-                                "categoryName":   .object([
-                                    "type": .string("string"),
-                                    "enum": .array(allowedCategories.map { .string($0) })
-                                ]),
-                                "intensityLevel": .object([
-                                    "type": .string("integer"),
-                                    "enum": .array([.int(1), .int(2), .int(3)])
-                                ]),
-                                "reasoning": .object(["type": .string("string")])
-                            ]),
-                            "required": .array([
-                                .string("chapterIndex"), .string("sceneIndex"),
-                                .string("categoryName"), .string("intensityLevel"),
-                                .string("reasoning")
-                            ]),
-                            "additionalProperties": .bool(false)
-                        ])
-                    ])
-                ]),
-                "required": .array([.string("classifications")]),
-                "additionalProperties": .bool(false)
-            ])
-
-            let prompt = """
-            CONTEXT:
-            \(contextBlock)
-
-            Classify each scene below:
-
-            \(sceneDescriptions)
-            """
-
-            do {
-                let raw = try await OllamaService.shared.generate(
-                    system: systemPrompt,
-                    prompt: prompt,
-                    schema: schema
-                )
-                guard let data = raw.data(using: .utf8) else { idx = batchEnd; continue }
-                let decoded = try JSONDecoder().decode(ClassificationResponse.self, from: data)
-                allClassifications.append(contentsOf: decoded.classifications)
-                for c in decoded.classifications {
-                    print("   ch\(c.chapterIndex)-s\(c.sceneIndex): \(c.categoryName) [\(c.intensityLevel)]")
-                }
-            } catch {
-                print("   ⚠️ Classification error scenes \(idx)-\(batchEnd - 1): \(error.localizedDescription)")
-            }
-
-            idx = batchEnd
-        }
-
-        return allClassifications
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // STEP 3 — Build SceneTags
-    // ═══════════════════════════════════════════════════════════════════════
-
-    private func buildTags(
-        from classifications: [SceneEmotion],
-        scenes: [SceneSegment],
-        playlist: Playlist
-    ) -> [SceneTag] {
-
-        var sceneMap: [String: SceneSegment] = [:]
-        for scene in scenes {
-            sceneMap["\(scene.chapterIndex)-\(scene.sceneIndex)"] = scene
-        }
-
-        var tags: [SceneTag] = []
-
-        for c in classifications {
-            let key = "\(c.chapterIndex)-\(c.sceneIndex)"
-            guard let scene = sceneMap[key] else { continue }
-            guard let category = playlist.emotions.first(where: {
-                $0.categoryName.lowercased() == c.categoryName.lowercased()
-            }) else { continue }
-
-            if scene.startPage == scene.endPage {
-                tags.append(SceneTag(
-                    page: scene.startPage,
-                    startLine: scene.startLine,
-                    endLine: scene.endLine,
-                    emotionCategoryID: category.id,
-                    intensityLevel: c.intensityLevel
-                ))
-            } else {
-                for pageNum in scene.startPage...scene.endPage {
-                    let startLine = pageNum == scene.startPage ? scene.startLine : 0
-                    let endLine   = pageNum == scene.endPage   ? scene.endLine   : 999
-                    tags.append(SceneTag(
-                        page: pageNum,
-                        startLine: startLine,
-                        endLine: endLine,
-                        emotionCategoryID: category.id,
-                        intensityLevel: c.intensityLevel
-                    ))
-                }
-            }
-        }
-
-        return tags
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // Helpers
-    // ═══════════════════════════════════════════════════════════════════════
-
-    // Strips Gutenberg headers, copyright blocks, and other non-story lines.
+    
+    /// Strips Project Gutenberg headers, copyright blocks, ToC, and other metadata.
     private func filterMetadata(from lines: [String]) -> [String] {
-        let skipPatterns = [
-            "project gutenberg", "gutenberg", "www.gutenberg", "gutenberg.org",
-            "copyright", "all rights reserved", "public domain",
-            "produced by", "transcribed by", "distributed by",
-            "isbn", "published by", "first published",
-            "table of contents", "contents", "index",
-            "dedication", "acknowledgment", "acknowledgement",
-            "also by", "other books by", "about the author",
-            "end of the project", "end of this project",
-            "terms of use", "license", "terms and conditions",
-            "small print", "fine print",
-            "this ebook", "this e-book", "this file",
-            "chapter list", "*** start", "*** end",
-            "encoding:", "character set",
+        let skipExact = [
+            "project gutenberg", "gutenberg.org",
+            "all rights reserved", "table of contents",
+            "*** start of", "*** end of",
+            "oceanofpdf"
         ]
-
-        var inMetadataBlock = false
-        var storyStarted = false
-        var result: [String] = []
-
-        for line in lines {
-            let lower = line.trimmingCharacters(in: .whitespaces).lowercased()
+        
+        return lines.filter { line in
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-
-            // Empty lines don't count as metadata
-            if trimmed.isEmpty {
-                if storyStarted { result.append(line) }
-                continue
-            }
-
-            // Detect Gutenberg block markers
-            if lower.contains("*** start of") || lower.contains("***start of") {
-                inMetadataBlock = false
-                storyStarted = false
-                continue
-            }
-            if lower.contains("*** end of") || lower.contains("***end of") {
-                inMetadataBlock = true
-                continue
-            }
-            if inMetadataBlock { continue }
-
-            // Skip lines that are clearly metadata
-            let isMetadata = skipPatterns.contains(where: { lower.contains($0) })
-                || (lower.hasPrefix("chapter") && trimmed.count < 30)
-                || (lower.hasPrefix("part") && trimmed.count < 20)
-                || (lower.hasPrefix("volume") && trimmed.count < 20)
-                || (lower.hasPrefix("book ") && trimmed.count < 20)
-                || (trimmed.count < 4)  // very short lines are usually headers/page numbers
-
-            if isMetadata && !storyStarted {
-                continue  // skip pre-story metadata
-            }
-
-            // Once we see a line that looks like real prose, mark story as started
-            if !storyStarted && trimmed.count > 20 && !isMetadata {
-                storyStarted = true
-            }
-
-            if storyStarted {
-                result.append(line)
-            }
+            if trimmed.isEmpty { return false }
+            let lower = trimmed.lowercased()
+            // Drop only obvious metadata markers
+            return !skipExact.contains(where: { lower.contains($0) })
         }
-
-        return result
     }
+    
 
-    private func extractExcerpt(from book: Book, scene: SceneSegment, maxLines: Int) -> String {
-        let allPages = book.allPages
-        guard let page = allPages.first(where: { $0.number == scene.startPage }) else {
-            return "(unavailable)"
-        }
-        let lines = page.lines
-        let start = max(0, min(scene.startLine, lines.count - 1))
-        let end   = min(lines.count - 1, start + maxLines - 1)
-        guard start <= end else { return "(unavailable)" }
-        return lines[start...end]
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-    }
-
-    private func fillGaps(tags: [SceneTag], pages: [BookPage], playlist: Playlist) -> [SceneTag] {
-        var result = tags
-
-        for page in pages {
-            let clamped: [SceneTag] = result
-                .filter { $0.page == page.number }
-                .map { tag in
-                    guard tag.endLine >= page.lines.count else { return tag }
-                    return SceneTag(
-                        id: tag.id,
-                        page: tag.page,
-                        startLine: tag.startLine,
-                        endLine: page.lines.count - 1,
-                        emotionCategoryID: tag.emotionCategoryID,
-                        intensityLevel: tag.intensityLevel,
-                        musicOverride: tag.musicOverride
-                    )
-                }
-
-            result.removeAll { $0.page == page.number }
-            result.append(contentsOf: clamped)
-
-            let pageTags = clamped.sorted { $0.startLine < $1.startLine }
-            let totalLines = page.lines.count
-            guard totalLines > 0 else { continue }
-
-            guard let fallbackID = pageTags.first?.emotionCategoryID ?? playlist.emotions.first?.id
-            else { continue }
-
-            var covered = Set<Int>()
-            for tag in pageTags {
-                for line in tag.startLine...tag.endLine { covered.insert(line) }
-            }
-
-            var gapStart: Int? = nil
-            for line in 0..<totalLines {
-                if !covered.contains(line) {
-                    if gapStart == nil { gapStart = line }
-                } else if let start = gapStart {
-                    let nearest = findNearestCategory(line: start, pageTags: pageTags, fallback: fallbackID)
-                    result.append(SceneTag(
-                        page: page.number, startLine: start, endLine: line - 1,
-                        emotionCategoryID: nearest, intensityLevel: 1
-                    ))
-                    gapStart = nil
-                }
-            }
-            if let start = gapStart {
-                let nearest = findNearestCategory(line: start, pageTags: pageTags, fallback: fallbackID)
-                result.append(SceneTag(
-                    page: page.number, startLine: start, endLine: totalLines - 1,
-                    emotionCategoryID: nearest, intensityLevel: 1
-                ))
-            }
-        }
-
-        return result
-    }
-
-    private func findNearestCategory(line: Int, pageTags: [SceneTag], fallback: UUID) -> UUID {
-        var bestDist = Int.max
-        var bestID   = fallback
-        for tag in pageTags {
-            let dist = min(abs(tag.startLine - line), abs(tag.endLine - line))
-            if dist < bestDist { bestDist = dist; bestID = tag.emotionCategoryID }
-        }
-        return bestID
-    }
-
-    private func buildRollingContext(previousContext: String, aiSummary: String) -> String {
-        guard !aiSummary.isEmpty else { return previousContext }
-        let combined = previousContext.isEmpty ? aiSummary : previousContext + "\n" + aiSummary
-        guard combined.count > 1000 else { return combined }
-        let trimmed = String(combined.suffix(1000))
-        if let nl = trimmed.firstIndex(of: "\n") {
-            return String(trimmed[trimmed.index(after: nl)...])
-        }
-        return trimmed
-    }
 }

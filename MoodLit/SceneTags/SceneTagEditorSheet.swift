@@ -14,9 +14,10 @@ import UniformTypeIdentifiers
 struct SceneTagEditorSheet: View {
 
     let bookID: UUID
-    let page: Int
+    let startPage: Int
     let startLine: Int
-    var endLine: Int
+    let endPage: Int
+    let endLine: Int
     let playlist: Playlist
     var existingTag: SceneTag? = nil
 
@@ -24,36 +25,38 @@ struct SceneTagEditorSheet: View {
 
     @State private var selectedCategoryID: UUID?
     @State private var selectedIntensity: Int = 1
+    @State private var editedEndPage: Int
     @State private var editedEndLine: Int
     @State private var showFilePicker = false
     @State private var musicOverride: MusicFile? = nil
 
     init(
         bookID: UUID,
-        page: Int,
+        startPage: Int,
         startLine: Int,
+        endPage: Int,
         endLine: Int,
         playlist: Playlist,
         existingTag: SceneTag? = nil
     ) {
         self.bookID = bookID
-        self.page = page
+        self.startPage = startPage
         self.startLine = startLine
+        self.endPage = endPage
         self.endLine = endLine
         self.playlist = playlist
         self.existingTag = existingTag
+        _editedEndPage = State(initialValue: existingTag?.endPage ?? endPage)
         _editedEndLine = State(initialValue: existingTag?.endLine ?? endLine)
         _selectedCategoryID = State(initialValue: existingTag?.emotionCategoryID)
         _selectedIntensity = State(initialValue: existingTag?.intensityLevel ?? 1)
         _musicOverride = State(initialValue: existingTag?.musicOverride)
     }
 
-    //Selects an emtion according to id of the selectedCategory by user
     private var selectedCategory: EmotionCategory? {
         playlist.emotions.first { $0.id == selectedCategoryID }
     }
 
-    //Returns the track assigned to that categiry
     private var playlistTrack: MusicFile? {
         guard let cat = selectedCategory else { return nil }
         switch selectedIntensity {
@@ -63,7 +66,6 @@ struct SceneTagEditorSheet: View {
         }
     }
 
-    //Shows a description for the intensity
     private var intensityDescription: String {
         guard let cat = selectedCategory else { return "" }
         switch selectedIntensity {
@@ -73,16 +75,22 @@ struct SceneTagEditorSheet: View {
         }
     }
 
-    //Save is disabled until a selection is made
-    private var canSave: Bool { selectedCategoryID != nil }
+    private var canSave: Bool {
+        guard selectedCategoryID != nil else { return false }
+        if editedEndPage < startPage { return false }
+        if editedEndPage == startPage && editedEndLine < startLine { return false }
+        return true
+    }
+
+    private var isMultiPage: Bool {
+        editedEndPage != startPage
+    }
 
     var body: some View {
         ZStack(alignment: .top) {
             Color.bg.ignoresSafeArea()
 
             VStack(spacing: 0) {
-
-                // Manual header bar
                 HStack {
                     Button("Cancel") { dismiss() }
                         .foregroundColor(Color.text2)
@@ -90,7 +98,7 @@ struct SceneTagEditorSheet: View {
 
                     Spacer()
 
-                    Text(existingTag == nil ? "Tag Scene" : "Edit Tag")
+                    Text(existingTag == nil ? "Tag Scene" : "Edit Scene")
                         .font(.headline)
                         .foregroundColor(Color.text)
 
@@ -107,7 +115,6 @@ struct SceneTagEditorSheet: View {
 
                 Divider().background(Color.surface3)
 
-                // Content
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
                         locationSection
@@ -131,76 +138,75 @@ struct SceneTagEditorSheet: View {
 
     // MARK: - Location
 
-    // Add this computed property alongside your other ones
-    private var expandedCount: Int {
-        editedEndLine - endLine
-    }
-
     private var locationSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionHeader("Location")
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("Scene Range")
 
-            HStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Page").font(.caption).foregroundColor(Color.text2)
-                    Text("\(page)").font(.headline).foregroundColor(Color.text)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Starts At").font(.caption).foregroundColor(Color.text2)
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Page").font(.caption2).foregroundColor(Color.text2)
+                        Text("\(startPage)").font(.headline).foregroundColor(Color.text)
+                    }
+                    Divider().frame(height: 30).background(Color.surface3)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Line").font(.caption2).foregroundColor(Color.text2)
+                        Text("\(startLine)").font(.headline).foregroundColor(Color.text)
+                    }
+                    Spacer()
                 }
+                .padding(14)
+                .background(Color.surface)
+                .cornerRadius(12)
+            }
 
-                Divider().frame(height: 30).background(Color.surface3)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Start").font(.caption).foregroundColor(Color.text2)
-                    Text("\(startLine)").font(.headline).foregroundColor(Color.text)
-                }
-
-                Divider().frame(height: 30).background(Color.surface3)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("End").font(.caption).foregroundColor(Color.text2)
-                    HStack(spacing: 8) {
-                        Text("\(editedEndLine)").font(.headline).foregroundColor(Color.text)
-                        Stepper("", value: $editedEndLine, in: startLine...startLine + 200)
-                            .labelsHidden()
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Ends At").font(.caption).foregroundColor(Color.text2)
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Page").font(.caption2).foregroundColor(Color.text2)
+                        HStack(spacing: 6) {
+                            Text("\(editedEndPage)").font(.headline).foregroundColor(Color.text)
+                            Stepper("", value: $editedEndPage, in: startPage...(startPage + 50))
+                                .labelsHidden()
+                        }
+                    }
+                    Divider().frame(height: 30).background(Color.surface3)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Line").font(.caption2).foregroundColor(Color.text2)
+                        HStack(spacing: 6) {
+                            Text("\(editedEndLine)").font(.headline).foregroundColor(Color.text)
+                            Stepper("", value: $editedEndLine, in: 0...500)
+                                .labelsHidden()
+                        }
                     }
                 }
+                .padding(14)
+                .background(Color.surface)
+                .cornerRadius(12)
             }
-            .padding(14)
-            .background(Color.surface)
-            .cornerRadius(12)
 
-            // Line counter
-            HStack(spacing: 12) {
-                HStack(spacing: 6) {
-                    Image(systemName: "text.line.last.and.arrowtriangle.forward")
-                        .font(.system(size: 11))
-                        .foregroundColor(Color.text2)
-                    Text("\(editedEndLine - startLine) lines selected")
-                        .font(.caption)
-                        .foregroundColor(Color.text2)
+            if isMultiPage {
+                HStack(spacing: 4) {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 10))
+                        .foregroundColor(Color.gold)
+                    Text("Multi-page scene (\(editedEndPage - startPage + 1) pages)")
+                        .font(.caption.weight(.medium))
+                        .foregroundColor(Color.gold)
                 }
-
-                if expandedCount > 0 {
-                    HStack(spacing: 4) {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.system(size: 10))
-                            .foregroundColor(Color.gold)
-                        Text("\(expandedCount) expanded")
-                            .font(.caption.weight(.medium))
-                            .foregroundColor(Color.gold)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Color.gold.opacity(0.12))
-                    .cornerRadius(6)
-                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color.gold.opacity(0.12))
+                .cornerRadius(6)
+                .padding(.horizontal, 4)
             }
-            .padding(.horizontal, 4)
         }
     }
 
     // MARK: - Emotion
-    //Displays list of all categories
-    //allows user to select one
+
     private var emotionSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeader("Emotion")
@@ -222,13 +228,10 @@ struct SceneTagEditorSheet: View {
                             Circle()
                                 .fill(category.color)
                                 .frame(width: 12, height: 12)
-
                             Text(category.categoryName)
                                 .font(.subheadline)
                                 .foregroundColor(Color.text)
-
                             Spacer()
-
                             if selectedCategoryID == category.id {
                                 Image(systemName: "checkmark")
                                     .font(.system(size: 13, weight: .semibold))
@@ -258,7 +261,7 @@ struct SceneTagEditorSheet: View {
     }
 
     // MARK: - Intensity
-    //Lets user pick  intensity for scene
+
     private var intensitySection: some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeader("Intensity")
@@ -309,9 +312,7 @@ struct SceneTagEditorSheet: View {
     }
 
     // MARK: - Music
-    //Allows user to see which track user is selecting
-    //If user can override current track or assing track if
-    //no music is has been assign to this intensity
+
     private var musicSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeader("Music")
@@ -400,26 +401,25 @@ struct SceneTagEditorSheet: View {
             .font(.subheadline.weight(.semibold))
             .foregroundColor(Color.text2)
     }
-    
 
-    //Creates a Scene Tag, and save its, which is an old tag the id remains the same
-    //new tag a new id is created
     private func save() {
         guard let categoryID = selectedCategoryID else { return }
         let tag = SceneTag(
             id: existingTag?.id ?? UUID(),
-            page: page,
+            startPage: startPage,
             startLine: startLine,
+            endPage: editedEndPage,
             endLine: editedEndLine,
             emotionCategoryID: categoryID,
             intensityLevel: selectedIntensity,
-            musicOverride: musicOverride
+            musicOverride: musicOverride,
+            musicPrompt: existingTag?.musicPrompt,
+            sceneSummary: existingTag?.sceneSummary
         )
         SceneTagEngine.save(tag, to: bookID)
         dismiss()
     }
 
-    //Helps import Music from File for Music Override feature.
     private func handleFilePick(_ result: Result<[URL], Error>) {
         guard case .success(let urls) = result, let url = urls.first else { return }
         guard url.startAccessingSecurityScopedResource() else { return }

@@ -46,6 +46,8 @@ struct BookReaderView: View {
     @State private var isTaggingMode: Bool = false
     // AI state is driven by book.aiAnalysisStatus / book.aiTagsEnabled — no local spinner needed
     @State private var aiErrorMessage: String? = nil
+    @State private var showAIChapterPicker = false
+    @State private var isAnalysingCurrentChapter = false
 
     init(book: Book) {
         self.bookID = book.id
@@ -175,6 +177,7 @@ struct BookReaderView: View {
         .sheet(isPresented: $showChapterList) {
             if let book { ChapterListView(book: book, currentPageIndex: $currentPageIndex) }
         }//Allows User to change  the  reding settings
+        .sheet(isPresented: $showAIChapterPicker) { AIChapterPickerSheet(bookID: bookID) }
         .sheet(isPresented: $showReaderSettings) {
             ReaderSettingsSheet(settings: settings, tracker: tracker)
         }//Calls the setup on Appear
@@ -202,7 +205,11 @@ struct BookReaderView: View {
             let activeTags = book.aiTagsEnabled
                 ? book.sceneTags
                 : book.sceneTags.filter { $0.musicOverride != nil }
-            musicEngine.load(sceneTags: activeTags, playlist: playlist)
+            musicEngine.load(
+                sceneTags: book.sceneTags,
+                playlist: playlist,
+                musicSource: book.musicSource
+            )
             musicEngine.onLineChanged(page: tracker.activePage, line: tracker.activeLine)
         }
         // Bug 3 fix: reload music immediately when user flips the AI tags toggle
@@ -211,7 +218,19 @@ struct BookReaderView: View {
             let activeTags = book.aiTagsEnabled
                 ? book.sceneTags
                 : book.sceneTags.filter { $0.musicOverride != nil }
-            musicEngine.load(sceneTags: activeTags, playlist: playlist)
+            musicEngine.load(
+                sceneTags: book.sceneTags,
+                playlist: playlist,
+                musicSource: book.musicSource
+            )
+            musicEngine.onLineChanged(page: tracker.activePage, line: tracker.activeLine)
+        }
+        .onChange(of: book?.musicSource) { _, _ in
+            guard let book, let playlist else { return }
+            let activeTags = book.aiTagsEnabled
+                ? book.sceneTags
+                : book.sceneTags.filter { $0.musicOverride != nil }
+            musicEngine.load(sceneTags: activeTags, playlist: playlist, musicSource: book.musicSource)
             musicEngine.onLineChanged(page: tracker.activePage, line: tracker.activeLine)
         }
         .alert("AI Error", isPresented: Binding(
@@ -225,19 +244,34 @@ struct BookReaderView: View {
     }
 
     // MARK: - AI Toolbar Button
-    // Switches on analysis status so the correct control is shown:
-    //   .notStarted  → dimmed sparkles, tap shows a hint
-    //   .inProgress  → spinner (non-interactive)
-    //   .completed   → gold/grey sparkles toggle
-    //   .failed      → orange retry button
+    
     @ViewBuilder
     private var aiToolbarButton: some View {
         switch book?.aiAnalysisStatus ?? .notStarted {
 
         case .completed:
-            Button {
-                guard let book else { return }
-                LibraryManager.shared.setAITagsEnabled(!book.aiTagsEnabled, for: bookID)
+            Menu {
+                Button {
+                    guard let book else { return }
+                    LibraryManager.shared.setAITagsEnabled(!book.aiTagsEnabled, for: bookID)
+                } label: {
+                    Label(
+                        book?.aiTagsEnabled == true ? "Hide AI Tags" : "Show AI Tags",
+                        systemImage: book?.aiTagsEnabled == true ? "eye.slash" : "eye"
+                    )
+                }
+                
+                Button {
+                    analyseCurrentChapter()
+                } label: {
+                    Label("Re-analyse This Chapter", systemImage: "arrow.triangle.2.circlepath")
+                }
+                
+                Button {
+                    showAIChapterPicker = true
+                } label: {
+                    Label("Analyse Other Chapters…", systemImage: "list.bullet.rectangle")
+                }
             } label: {
                 Image(systemName: book?.aiTagsEnabled == true ? "sparkles" : "wand.and.rays.inverse")
                     .foregroundColor(book?.aiTagsEnabled == true ? Color.gold : Color.text2)
@@ -249,13 +283,17 @@ struct BookReaderView: View {
                 .scaleEffect(0.85)
 
         case .failed:
-            Button {
-                guard let book else {
-                    aiErrorMessage = "Book not found."
-                    return
+            Menu {
+                Button {
+                    analyseCurrentChapter()
+                } label: {
+                    Label("Retry This Chapter", systemImage: "arrow.triangle.2.circlepath")
                 }
-                Task.detached(priority: .background) {
-                    await LibraryManager.shared.runBackgroundAnalysis(for: book.id)
+                
+                Button {
+                    showAIChapterPicker = true
+                } label: {
+                    Label("Pick Chapters…", systemImage: "list.bullet.rectangle")
                 }
             } label: {
                 Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
@@ -263,8 +301,18 @@ struct BookReaderView: View {
             }
 
         case .notStarted:
-            Button {
-                aiErrorMessage = "AI analysis starts automatically once you assign a playlist to this book."
+            Menu {
+                Button {
+                    analyseCurrentChapter()
+                } label: {
+                    Label("Analyse This Chapter", systemImage: "sparkles")
+                }
+                
+                Button {
+                    showAIChapterPicker = true
+                } label: {
+                    Label("Pick Chapters…", systemImage: "list.bullet.rectangle")
+                }
             } label: {
                 Image(systemName: "sparkles")
                     .foregroundColor(Color.text2.opacity(0.4))
@@ -359,7 +407,11 @@ struct BookReaderView: View {
     private func setup() {
         guard let book else { return }
         LibraryManager.shared.updateLastOpened(for: book.id)
-        if let playlist { musicEngine.load(sceneTags: book.sceneTags, playlist: playlist) }
+        if let playlist { musicEngine.load(
+            sceneTags: book.sceneTags,
+            playlist: playlist,
+            musicSource: book.musicSource
+        ) }
         currentPageIndex = book.readingProgress.pageIndex
         let pages = book.allPages
         if currentPageIndex < pages.count {
@@ -372,6 +424,70 @@ struct BookReaderView: View {
         if book.chapters.isEmpty && !hasLoaded && !book.localEPUBPath.isEmpty {
             hasLoaded = true
             Task { await loadEpubContent() }
+        }
+    }
+    
+    /// Analyses only the chapter the user is currently reading.
+    @MainActor
+    private func analyseCurrentChapter() {
+        guard let book else { return }
+        guard let playlist else {
+            aiErrorMessage = "Assign a playlist first."
+            return
+        }
+        guard !isAnalysingCurrentChapter else { return }
+        
+        // Find which chapter the current page belongs to
+        let pages = book.allPages
+        guard currentPageIndex < pages.count else { return }
+        let currentPageNumber = pages[currentPageIndex].number
+        
+        guard let chapterIndex = book.chapters.firstIndex(where: {
+            $0.pages.contains(where: { $0.number == currentPageNumber })
+        }) else {
+            aiErrorMessage = "Could not determine current chapter."
+            return
+        }
+        
+        isAnalysingCurrentChapter = true
+        
+        if let idx = library.books.firstIndex(where: { $0.id == bookID }) {
+            library.books[idx].aiAnalysisStatus = .inProgress
+            library.save()
+        }
+        
+        let capturedBookID = bookID
+        let capturedPlaylist = playlist
+        let capturedChapterIndex = chapterIndex
+        
+        Task {
+            let analyzer = ChapterAnalyzer()
+            
+            do {
+                guard let freshBook = LibraryManager.shared.books.first(where: { $0.id == capturedBookID }) else {
+                    return
+                }
+                try await analyzer.analyze(
+                    book: freshBook,
+                    playlist: capturedPlaylist,
+                    chapterIndex: capturedChapterIndex
+                )
+                
+                if let idx = LibraryManager.shared.books.firstIndex(where: { $0.id == capturedBookID }) {
+                    LibraryManager.shared.books[idx].aiAnalysisStatus = .completed
+                    LibraryManager.shared.save()
+                }
+            } catch {
+                print("❌ Current chapter analysis failed: \(error.localizedDescription)")
+                aiErrorMessage = error.localizedDescription
+                
+                if let idx = LibraryManager.shared.books.firstIndex(where: { $0.id == capturedBookID }) {
+                    LibraryManager.shared.books[idx].aiAnalysisStatus = .failed
+                    LibraryManager.shared.save()
+                }
+            }
+            
+            isAnalysingCurrentChapter = false
         }
     }
 
@@ -417,7 +533,10 @@ struct BookReaderView: View {
         guard currentPageIndex < pages.count else { return 0 }
 
         let currentPageNumber = pages[currentPageIndex].number
-        return book.sceneTags.filter { $0.page == currentPageNumber }.count
+        // A scene "covers" this page if the page falls within its range
+        return book.sceneTags.filter { tag in
+            currentPageNumber >= tag.startPage && currentPageNumber <= tag.endPage
+        }.count
     }
 }
 
