@@ -14,7 +14,6 @@ import Combine
 
 struct BookReaderView: View {
     let bookID: UUID
-
     //Find book by id, via computed property, always
     //Reflects lastest changes to book
     private var book: Book? {
@@ -250,31 +249,24 @@ struct BookReaderView: View {
         switch book?.aiAnalysisStatus ?? .notStarted {
 
         case .completed:
+           
             Menu {
-                Button {
-                    guard let book else { return }
-                    LibraryManager.shared.setAITagsEnabled(!book.aiTagsEnabled, for: bookID)
-                } label: {
-                    Label(
-                        book?.aiTagsEnabled == true ? "Hide AI Tags" : "Show AI Tags",
-                        systemImage: book?.aiTagsEnabled == true ? "eye.slash" : "eye"
-                    )
-                }
-                
                 Button {
                     analyseCurrentChapter()
                 } label: {
-                    Label("Re-analyse This Chapter", systemImage: "arrow.triangle.2.circlepath")
+                    Label("Re-analyse This Chapter",
+                          systemImage: "arrow.triangle.2.circlepath")
                 }
                 
                 Button {
                     showAIChapterPicker = true
                 } label: {
-                    Label("Analyse Other Chapters…", systemImage: "list.bullet.rectangle")
+                    Label("Analyse Other Chapters…",
+                          systemImage: "list.bullet.rectangle")
                 }
             } label: {
-                Image(systemName: book?.aiTagsEnabled == true ? "sparkles" : "wand.and.rays.inverse")
-                    .foregroundColor(book?.aiTagsEnabled == true ? Color.gold : Color.text2)
+                Image(systemName: "sparkles")
+                    .foregroundColor(Color.gold)  // always gold when completed
             }
 
         case .inProgress:
@@ -287,13 +279,15 @@ struct BookReaderView: View {
                 Button {
                     analyseCurrentChapter()
                 } label: {
-                    Label("Retry This Chapter", systemImage: "arrow.triangle.2.circlepath")
+                    Label("Retry This Chapter",
+                          systemImage: "arrow.triangle.2.circlepath")
                 }
                 
                 Button {
                     showAIChapterPicker = true
                 } label: {
-                    Label("Pick Chapters…", systemImage: "list.bullet.rectangle")
+                    Label("Pick Chapters…",
+                          systemImage: "list.bullet.rectangle")
                 }
             } label: {
                 Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
@@ -311,7 +305,8 @@ struct BookReaderView: View {
                 Button {
                     showAIChapterPicker = true
                 } label: {
-                    Label("Pick Chapters…", systemImage: "list.bullet.rectangle")
+                    Label("Pick Chapters…",
+                          systemImage: "list.bullet.rectangle")
                 }
             } label: {
                 Image(systemName: "sparkles")
@@ -319,7 +314,6 @@ struct BookReaderView: View {
             }
         }
     }
-
     // MARK: - Bottom Bar
     //Bottom progress bar and page counter
     //Allows user to see their current progress in the book and
@@ -407,11 +401,15 @@ struct BookReaderView: View {
     private func setup() {
         guard let book else { return }
         LibraryManager.shared.updateLastOpened(for: book.id)
-        if let playlist { musicEngine.load(
-            sceneTags: book.sceneTags,
-            playlist: playlist,
-            musicSource: book.musicSource
-        ) }
+        
+        if let playlist {
+            musicEngine.load(
+                sceneTags: book.sceneTags,
+                playlist: playlist,
+                musicSource: book.musicSource
+            )
+        }
+        
         currentPageIndex = book.readingProgress.pageIndex
         let pages = book.allPages
         if currentPageIndex < pages.count {
@@ -420,7 +418,15 @@ struct BookReaderView: View {
         if book.readingProgress.lineIndex > 0 {
             tracker.targetLine = book.readingProgress.lineIndex
         }
-        // Parse epub on first open if chapters haven't been loaded yet
+        
+        //rigger music for current position on open
+        // detectActiveLine will fire once lineStaticY populates
+        // but this handles the case where we already know the line
+        musicEngine.onLineChanged(
+            page: tracker.activePage,
+            line: tracker.activeLine
+        )
+        
         if book.chapters.isEmpty && !hasLoaded && !book.localEPUBPath.isEmpty {
             hasLoaded = true
             Task { await loadEpubContent() }
@@ -437,7 +443,6 @@ struct BookReaderView: View {
         }
         guard !isAnalysingCurrentChapter else { return }
         
-        // Find which chapter the current page belongs to
         let pages = book.allPages
         guard currentPageIndex < pages.count else { return }
         let currentPageNumber = pages[currentPageIndex].number
@@ -450,7 +455,7 @@ struct BookReaderView: View {
         }
         
         isAnalysingCurrentChapter = true
-        
+  
         if let idx = library.books.firstIndex(where: { $0.id == bookID }) {
             library.books[idx].aiAnalysisStatus = .inProgress
             library.save()
@@ -462,32 +467,40 @@ struct BookReaderView: View {
         
         Task {
             let analyzer = ChapterAnalyzer()
-            
             do {
-                guard let freshBook = LibraryManager.shared.books.first(where: { $0.id == capturedBookID }) else {
+                guard let freshBook = LibraryManager.shared.books
+                    .first(where: { $0.id == capturedBookID }) else {
+                    await MainActor.run { isAnalysingCurrentChapter = false }
                     return
                 }
+                
                 try await analyzer.analyze(
                     book: freshBook,
                     playlist: capturedPlaylist,
                     chapterIndex: capturedChapterIndex
                 )
                 
-                if let idx = LibraryManager.shared.books.firstIndex(where: { $0.id == capturedBookID }) {
-                    LibraryManager.shared.books[idx].aiAnalysisStatus = .completed
-                    LibraryManager.shared.save()
+                await MainActor.run {
+                    if let idx = LibraryManager.shared.books
+                        .firstIndex(where: { $0.id == capturedBookID }) {
+                        LibraryManager.shared.books[idx].aiAnalysisStatus = .completed
+                        LibraryManager.shared.save()
+                    }
+                    isAnalysingCurrentChapter = false
                 }
-            } catch {
-                print("❌ Current chapter analysis failed: \(error.localizedDescription)")
-                aiErrorMessage = error.localizedDescription
                 
-                if let idx = LibraryManager.shared.books.firstIndex(where: { $0.id == capturedBookID }) {
-                    LibraryManager.shared.books[idx].aiAnalysisStatus = .failed
-                    LibraryManager.shared.save()
+            } catch {
+                print("❌ Analysis failed: \(error.localizedDescription)")
+                await MainActor.run {
+                    aiErrorMessage = error.localizedDescription
+                    if let idx = LibraryManager.shared.books
+                        .firstIndex(where: { $0.id == capturedBookID }) {
+                        LibraryManager.shared.books[idx].aiAnalysisStatus = .failed
+                        LibraryManager.shared.save()
+                    }
+                    isAnalysingCurrentChapter = false
                 }
             }
-            
-            isAnalysingCurrentChapter = false
         }
     }
 
@@ -540,6 +553,15 @@ struct BookReaderView: View {
     }
 }
 
+// MARK: - LineFrameKey PreferenceKey (add at top level, after imports)
+
+struct LineFrameKey: PreferenceKey {
+    static var defaultValue: [Int: CGRect] = [:]
+    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
+        value.merge(nextValue()) { $1 }
+    }
+}
+
 // MARK: - PageView
 //Shows the formated text in page layout for user to read
 //Renders lines,scroll offsets,takes care of reader marker
@@ -551,45 +573,33 @@ struct PageView: View {
     let sceneTags: [SceneTag]
     let playlist: Playlist?
     let isTaggingMode: Bool
-    //Objects that react to changes
     @ObservedObject var tracker: LineTracker
     @ObservedObject var musicEngine: MusicEngine
     @ObservedObject var settings: ReaderSettings
-
-    //How far is content scrolled vertically
+    
     @State private var scrollOffset: CGFloat = 0
-    //Maps index line to the y position on content y coordinate space
-    //Works like dictionay where the key is line index and  value is the position on the space
+    // Keep original onAppear‑based dictionary for scrolling (fast, always available)
     @State private var lineStaticY: [Int: CGFloat] = [:]
-
-    // Manual scroll — direction locking
+    // Use preference‑based dictionary for accurate detection (complete after layout)
+    @State private var lineFrames: [Int: CGRect] = [:]
+    
     @State private var dragStartOffset: CGFloat = 0
     @State private var dragDirection: DragDirection = .undecided
-    //Prevents line jumps form firing more than once
     @State private var hasScrolledToTarget: Bool = false
     
-    
-
     private enum DragDirection {
         case undecided, vertical, horizontal
     }
-
-    //Emits a value 60 times per second,
-    //Which helps update on the run State And Published properties,
-    //Timer Keeps emiting values even when user is interacting with screen
+    
     private let ticker = Timer.publish(every: 1/60, on: .main, in: .common).autoconnect()
     private let topPadding: CGFloat = 50
-
+    
     var body: some View {
         GeometryReader { geo in
             let containerH = geo.size.height
-            //Calculates the postion of the marker for screen display
-            //Uses ReaderSettings values too
             let markerY = topPadding + (containerH - topPadding - 80) * CGFloat(settings.markerPosition)
-
+            
             ZStack(alignment: .topTrailing) {
-
-                // ── Content lines ──
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(page.lines.enumerated()), id: \.offset) { idx, text in
                         SceneTagLineWrapper(
@@ -598,17 +608,18 @@ struct PageView: View {
                             sceneTags: sceneTags,
                             playlist: playlist,
                             bookID: bookID,
-                            isTaggingMode: isTaggingMode
+                            isTaggingMode: isTaggingMode,
+                            isActive: tracker.activePage == page.number && tracker.activeLine == idx
                         ) {
                             Text(text)
                                 .font(settings.readerFont.font(size: settings.fontSize))
                                 .foregroundColor(
-                                    tracker.activePage == page.number && tracker.activeLine == idx
+                                    isTaggingMode && tracker.activePage == page.number && tracker.activeLine == idx
                                         ? settings.backgroundTheme.textColor(scheme: settings.colorScheme)
                                         : settings.backgroundTheme.mutedTextColor(scheme: settings.colorScheme)
                                 )
                                 .background(
-                                    tracker.activePage == page.number && tracker.activeLine == idx
+                                    isTaggingMode && tracker.activePage == page.number && tracker.activeLine == idx
                                         ? Color.gold.opacity(0.1) : Color.clear
                                 )
                                 .fixedSize(horizontal: false, vertical: true)
@@ -617,10 +628,16 @@ struct PageView: View {
                         }
                         .background(
                             GeometryReader { lineGeo in
-                                Color.clear.onAppear {
-                                    let midY = lineGeo.frame(in: .named("pageContent")).midY
-                                    lineStaticY[idx] = midY
-                                }
+                                Color.clear
+                                    .onAppear {
+                                        // Keep lineStaticY for immediate scrolling
+                                        let midY = lineGeo.frame(in: .named("pageContent")).midY
+                                        lineStaticY[idx] = midY
+                                    }
+                                    .preference(
+                                        key: LineFrameKey.self,
+                                        value: [idx: lineGeo.frame(in: .named("pageContent"))]
+                                    )
                             }
                         )
                     }
@@ -629,47 +646,32 @@ struct PageView: View {
                 .padding(.top, topPadding)
                 .padding(.bottom, containerH * 0.8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                //Allows all areas to be tappable for scrolling
                 .contentShape(Rectangle())
                 .coordinateSpace(name: "pageContent")
-                //Sets where content is displayed and changes as scrollOffset increases
                 .offset(y: topPadding - scrollOffset)
-                //Fades the top and bottom content
                 .mask(
                     VStack(spacing: 0) {
-                        LinearGradient(
-                            colors: [Color.clear, Color.black],
-                            startPoint: .top, endPoint: .bottom
-                        )
-                        .frame(height: 40)
+                        LinearGradient(colors: [Color.clear, Color.black], startPoint: .top, endPoint: .bottom).frame(height: 40)
                         Rectangle()
-                        LinearGradient(
-                            colors: [Color.black, Color.clear],
-                            startPoint: .top, endPoint: .bottom
-                        )
-                        .frame(height: 40)
+                        LinearGradient(colors: [Color.black, Color.clear], startPoint: .top, endPoint: .bottom).frame(height: 40)
                     }
                 )
-
-            //Marks pages and show trakcs names
-            PageMarkerView(
-                    markerY: markerY,
-                    musicEngine: musicEngine
-                )
+                .onPreferenceChange(LineFrameKey.self) { frames in
+                    // Store complete frames for accurate line detection
+                    lineFrames = frames
+                }
+                
+                PageMarkerView(markerY: markerY, tagMode: isTaggingMode, musicEngine: musicEngine)
             }
-            //Manual Scrolling with direction locking
             .simultaneousGesture(
                 DragGesture(minimumDistance: 15)
                     .onChanged { value in
                         guard !tracker.isAutoScrolling else { return }
-
                         let horizontal = abs(value.translation.width)
                         let vertical = abs(value.translation.height)
-
+                        
                         if dragDirection == .undecided {
                             if scrollOffset > 5 {
-                                // When scrolled down: only treat as horizontal
-                                // if it's VERY clearly horizontal (3x wider than tall)
                                 if horizontal > vertical * 3 {
                                     dragDirection = .horizontal
                                 } else {
@@ -677,7 +679,6 @@ struct PageView: View {
                                     dragStartOffset = scrollOffset
                                 }
                             } else {
-                                // At the top: normal direction detection
                                 if vertical > horizontal {
                                     dragDirection = .vertical
                                     dragStartOffset = scrollOffset
@@ -686,9 +687,8 @@ struct PageView: View {
                                 }
                             }
                         }
-
+                        
                         guard dragDirection == .vertical else { return }
-
                         let proposed = dragStartOffset - value.translation.height
                         let maxOffset = maxScrollOffset(markerY: markerY)
                         scrollOffset = proposed.clamped(to: 0...maxOffset)
@@ -698,15 +698,10 @@ struct PageView: View {
                     }
             )
             .onReceive(ticker) { _ in
-                //Multiple apges have their own  timers in memory, this ensures
-                //that only current page triggers updating tracker.activeline and scrollOffset
                 guard tracker.activePage == page.number else { return }
-
-                //If user changes marker position update tracker with value of position
                 tracker.markerY = markerY
-
                 
-                // Scroll to target line once lineStaticY is ready
+                // Scroll to target line using lineStaticY (already populated)
                 if !hasScrolledToTarget, let target = tracker.targetLine,
                    let targetY = lineStaticY[target], !lineStaticY.isEmpty {
                     let offset = max(0, targetY + topPadding - markerY)
@@ -716,9 +711,7 @@ struct PageView: View {
                     tracker.targetLine = nil
                     hasScrolledToTarget = true
                 }
-
-                //Increments  scrolling (0.5p)  per frame,
-                //THis increment allows for continous movement of marker
+                
                 if tracker.isAutoScrolling {
                     let pxPerFrame = tracker.scrollSpeed / 60.0
                     scrollOffset += pxPerFrame
@@ -728,367 +721,356 @@ struct PageView: View {
                         tracker.isAutoScrolling = false
                     }
                 }
-
-                //In every frame Calcualte the closes line to the marker
+                
                 detectActiveLine(markerY: markerY)
             }
         }
         .onAppear {
             scrollOffset = 0
             lineStaticY = [:]
+            lineFrames = [:]
             dragDirection = .undecided
             hasScrolledToTarget = false
         }
     }
-
-    //This function computes the maximum amount the content can scroll
-    //the point where the very last line sits at the marker position.
-    //Basically gets max page offset  by calculating top padding, line postion, marker postion
+    
     private func maxScrollOffset(markerY: CGFloat) -> CGFloat {
+        // Use lineStaticY for scrolling (always available as lines appear)
         guard let lastY = lineStaticY[page.lines.count - 1] else { return 0 }
         return max(0, lastY + topPadding - markerY)
     }
-
-    //Calcualtes the the closes line to marked
+    
     private func detectActiveLine(markerY: CGFloat) {
-        guard tracker.activePage == page.number, !lineStaticY.isEmpty else { return }
+        guard tracker.activePage == page.number else { return }
 
-        
         var bestIdx = 0
         var bestDist = CGFloat.infinity
-        //Calcualtes the the closes line to marked
-        //staticY — where the line was laid out
-        //scrollOffset — how far the content has moved up (increases as you scroll down)
-        //topPadding — the 50pt gap at the top
-        for (idx, staticY) in lineStaticY {
-            let screenY = staticY - scrollOffset + topPadding
-            let dist = abs(screenY - markerY)
-            if dist < bestDist {
-                bestDist = dist
-                bestIdx = idx
-            }
-        }
 
-        //After Calculating the the closest line(bestIdx)
-        // the jump doesnt happen instantly, it steps line by line
-        //Problem: Line triggers  lagged behind, or never excecuted at high speed.
-        //If line 6 play music, it would lag and play in line 8 but line 8 has a diffrent trigger
-        /*Frame 1: bestIdx=8, current=5 → nextLine=6  (step toward 8)
-         Frame 2: bestIdx=8, current=6 → nextLine=7  (step toward 8)
-         Frame 3: bestIdx=8, current=7 → nextLine=8  (step toward 8)
-         Frame 4: bestIdx=8, current=8 → nextLine=8  (arrived, no change)
-         If line 6 has a scene tag with "Tension" music, it fires on Frame 1 — exactly when
-         the marker reaches line 6. Without the stepping, it would fire on Frame 1 at line 8, making it look like
-         the music changed before the marker got there.
-         */
-        let current = tracker.activeLine
-        let nextLine: Int
-        if bestIdx > current {
-            nextLine = current + 1
-        } else if bestIdx < current {
-            nextLine = current - 1
+        if !lineFrames.isEmpty {
+            for (idx, rect) in lineFrames {
+                let screenY = rect.midY - scrollOffset + topPadding
+                let dist = abs(screenY - markerY)
+                if dist < bestDist {
+                    bestDist = dist
+                    bestIdx = idx
+                }
+            }
+        } else if !lineStaticY.isEmpty {
+            for (idx, y) in lineStaticY {
+                let screenY = y - scrollOffset + topPadding
+                let dist = abs(screenY - markerY)
+                if dist < bestDist {
+                    bestDist = dist
+                    bestIdx = idx
+                }
+            }
         } else {
-            nextLine = current
+            return
         }
 
-        //Only Changes value if a changed happened
-        if nextLine != tracker.activeLine {
-            tracker.activeLine = nextLine
+        //  Update activeLine only when changed
+        if bestIdx != tracker.activeLine {
+            tracker.activeLine = bestIdx
         }
 
-        //Calls music engine every frame
-        //Music Engine already accounts for every frame and can exit early if its not needed
-        musicEngine.onLineChanged(page: tracker.activePage, line: tracker.activeLine)
+        //Always call — MusicEngine guards against re-trigger via activeTagID
+        // This ensures music starts on page load even if bestIdx == activeLine
+        musicEngine.onLineChanged(
+            page: tracker.activePage,
+            line: bestIdx
+        )
     }
 }
-
-// MARK: - PageMarkerView
-//Marks pages and show trakcs names
-struct PageMarkerView: View {
-    let markerY: CGFloat
-    @ObservedObject var musicEngine: MusicEngine
-
-    var body: some View {
-        ZStack(alignment: .topTrailing) {
-            HStack(spacing: 0) {
-                Rectangle()
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.gold.opacity(0.0), Color.gold.opacity(0.55)],
-                            startPoint: .leading, endPoint: .trailing
+    
+    // MARK: - PageMarkerView
+    //Marks pages and show trakcs names
+    struct PageMarkerView: View {
+        let markerY: CGFloat
+        let tagMode: Bool
+        @ObservedObject var musicEngine: MusicEngine
+        
+        var body: some View {
+            ZStack(alignment: .topTrailing) {
+                HStack(spacing: 0) {
+                    Rectangle()
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.gold.opacity(0.0), Color.gold.opacity(0.55)],
+                                startPoint: .leading, endPoint: .trailing
+                            )
                         )
-                    )
-                    .frame(height: 1.5)
-
-                Circle()
-                    .fill(Color.gold)
-                    .frame(width: 16, height: 16)
-                    .shadow(color: Color.gold.opacity(0.6), radius: 5)
-                    .padding(.trailing, 6)
-            }
-            .frame(maxWidth: .infinity)
-            .offset(y: markerY)
-
-            if let track = musicEngine.currentTrack {
-                HStack(spacing: 5) {
-                    Image(systemName: "music.note")
-                        .font(.system(size: 10))
-                        .foregroundColor(Color.gold)
-                    Text(track.title)
-                        .font(.caption2)
-                        .foregroundColor(Color.text2)
-                        .lineLimit(1)
+                        .frame(height: 1.5)
+                    
+                    Circle()
+                        .fill(Color.gold)
+                        .frame(width: 16, height: 16)
+                        .shadow(color: Color.gold.opacity(0.6), radius: 5)
+                        .padding(.trailing, 6)
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.surface2.opacity(0.9))
-                .cornerRadius(12)
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.gold.opacity(0.2), lineWidth: 1))
-                .padding(.trailing, 28)
-                .offset(y: max(10, markerY - 32))
-            }
-        }
-        .allowsHitTesting(false)
-    }
-}
-
-// MARK: - Reader Settings Sheet
-//Allow user to change the format of the text, and background of page,
-//Change marker postion and speed of auto scroll
-struct ReaderSettingsSheet: View {
-    @ObservedObject var settings: ReaderSettings
-    @ObservedObject var tracker: LineTracker
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            List {
+                .frame(maxWidth: .infinity)
+                .offset(y: markerY)
                 
-                //Allows user to select a type of font
-                Section("Font") {
-                    ForEach(ReaderFont.allCases, id: \.rawValue) { font in
-                        Button {
-                            settings.readerFont = font
-                            settings.save()
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(font.displayName)
-                                        .font(font.font(size: 16))
-                                        .foregroundColor(Color.text)
-                                    Text("The old castle stood silent in the mist.")
-                                        .font(font.font(size: 13))
-                                        .foregroundColor(Color.text2)
-                                }
-                                Spacer()
-                                if settings.readerFont == font {
-                                    Image(systemName: "checkmark")
-                                        .foregroundColor(Color.gold)
-                                        .font(.system(size: 14, weight: .semibold))
-                                }
-                            }
-                            .padding(.vertical, 4)
-                        }
-                        .buttonStyle(.plain)
-                        .listRowBackground(settings.readerFont == font ? Color.gold.opacity(0.08) : Color.surface)
+                if tagMode, let track = musicEngine.currentTrack {
+                    HStack(spacing: 5) {
+                        Image(systemName: "music.note")
+                            .font(.system(size: 10))
+                            .foregroundColor(Color.gold)
+                        Text(track.title)
+                            .font(.caption2)
+                            .foregroundColor(Color.text2)
+                            .lineLimit(1)
                     }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.surface2.opacity(0.9))
+                    .cornerRadius(12)
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.gold.opacity(0.2), lineWidth: 1))
+                    .padding(.trailing, 28)
+                    .offset(y: max(10, markerY - 32))
                 }
-
-                Section("Font Size") {
-                    HStack(spacing: 12) {
-                        Text("A").font(.system(size: 13, design: .serif)).foregroundColor(Color.text2)
-                        Slider(value: $settings.fontSize, in: 12...28, step: 1)
-                            .accentColor(Color.gold)
-                            .onChange(of: settings.fontSize) { oldValue, newValue in settings.save() }
-                        Text("A").font(.system(size: 22, design: .serif)).foregroundColor(Color.text2)
-                    }
-                    .padding(.vertical, 4)
-
-                    Text("The old castle stood silent in the mist.")
-                        .font(settings.readerFont.font(size: settings.fontSize))
-                        .foregroundColor(Color.text)
-                        .padding(.vertical, 4)
-                        .listRowBackground(Color.surface)
-                }
-
-                //Changes Background Color
-                Section("Background") {
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                        ForEach(ReaderBackground.allCases, id: \.rawValue) { theme in
+            }
+            .allowsHitTesting(false)
+        }
+    }
+    
+    // MARK: - Reader Settings Sheet
+    //Allow user to change the format of the text, and background of page,
+    //Change marker postion and speed of auto scroll
+    struct ReaderSettingsSheet: View {
+        @ObservedObject var settings: ReaderSettings
+        @ObservedObject var tracker: LineTracker
+        @Environment(\.dismiss) private var dismiss
+        
+        var body: some View {
+            NavigationStack {
+                List {
+                    
+                    //Allows user to select a type of font
+                    Section("Font") {
+                        ForEach(ReaderFont.allCases, id: \.rawValue) { font in
                             Button {
-                                settings.backgroundTheme = theme
+                                settings.readerFont = font
                                 settings.save()
                             } label: {
-                                HStack(spacing: 10) {
-                                    Circle()
-                                        .fill(theme.backgroundColor)
-                                        .frame(width: 22, height: 22)
-                                        .overlay(Circle().stroke(Color.gold.opacity(0.3), lineWidth: 1))
-                                    Text(theme.displayName).font(.subheadline).foregroundColor(Color.text)
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(font.displayName)
+                                            .font(font.font(size: 16))
+                                            .foregroundColor(Color.text)
+                                        Text("The old castle stood silent in the mist.")
+                                            .font(font.font(size: 13))
+                                            .foregroundColor(Color.text2)
+                                    }
+                                    Spacer()
+                                    if settings.readerFont == font {
+                                        Image(systemName: "checkmark")
+                                            .foregroundColor(Color.gold)
+                                            .font(.system(size: 14, weight: .semibold))
+                                    }
                                 }
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 10)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(settings.backgroundTheme == theme ? Color.gold.opacity(0.12) : Color.surface2)
-                                .cornerRadius(10)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .stroke(settings.backgroundTheme == theme ? Color.gold : Color.clear, lineWidth: 1.5)
-                                )
+                                .padding(.vertical, 4)
                             }
                             .buttonStyle(.plain)
+                            .listRowBackground(settings.readerFont == font ? Color.gold.opacity(0.08) : Color.surface)
                         }
                     }
-                    .padding(.vertical, 4)
-                    .listRowBackground(Color.surface)
-                }
-
-                //Allows for the position fo the reading marker to be changed
-                Section("Reading Marker") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Marker Position").font(.subheadline).foregroundColor(Color.text)
-                        HStack(spacing: 8) {
-                            Text("Top")
-                                .font(.caption2)
-                                .foregroundColor(Color.text2)
-                            Slider(value: $settings.markerPosition, in: 0...1)
-                                .accentColor(Color.gold)
-                                .onChange(of: settings.markerPosition) { oldValue, newValue in settings.save() }
-                            Text("Bottom")
-                                .font(.caption2)
-                                .foregroundColor(Color.text2)
-                        }
-
-                        ZStack(alignment: .leading) {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(settings.backgroundTheme.backgroundColor)
-                                .frame(height: 80)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(Color.surface3, lineWidth: 1)
-                                )
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                ForEach(0..<5) { i in
-                                    RoundedRectangle(cornerRadius: 1)
-                                        .fill(Color.text2.opacity(0.2))
-                                        .frame(width: CGFloat([120, 150, 90, 140, 110][i]), height: 3)
-                                }
-                            }
-                            .padding(.leading, 12)
-                            .padding(.vertical, 10)
-
-                            Rectangle()
-                                .fill(Color.gold.opacity(0.6))
-                                .frame(height: 1.5)
-                                .offset(y: -40 + 80 * CGFloat(settings.markerPosition))
-                        }
-                    }
-                    .padding(.vertical, 4)
-                    .listRowBackground(Color.surface)
-
-                    //Changes reading speed for autocroll
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Auto-scroll Speed").font(.subheadline).foregroundColor(Color.text)
-                        HStack(spacing: 8) {
-                            Image(systemName: "tortoise.fill").font(.system(size: 12)).foregroundColor(Color.text2)
-                            Slider(value: $tracker.sliderValue, in: 0...1).accentColor(Color.gold)
-                            Image(systemName: "hare.fill").font(.system(size: 12)).foregroundColor(Color.text2)
-                        }
-                        Text("\(Int(tracker.scrollSpeed)) pts/sec").font(.caption2).foregroundColor(Color.text2)
-                    }
-                    .padding(.vertical, 4)
-                    .listRowBackground(Color.surface)
-                }
-            }
-            .listStyle(.insetGrouped)
-            .scrollContentBackground(.hidden)
-            .background(Color.bg)
-            .navigationTitle("Reader Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }.foregroundColor(Color.gold)
-                }
-            }
-        }
-        .background(Color.bg)
-    }
-}
-
-// MARK: - Chapter List Sheet
-//Shows a list of all the book chapters
-struct ChapterListView: View {
-    let book: Book
-    @Binding var currentPageIndex: Int
-    @Environment(\.dismiss) private var dismiss
-
-    // Compute which chapter the current page belongs to
-    private var currentChapterID: UUID? {
-        let pages = book.allPages
-        guard currentPageIndex < pages.count else { return nil }
-        let pageNumber = pages[currentPageIndex].number
-        return book.chapters.first {
-            $0.pages.contains(where: { $0.number == pageNumber })
-        }?.id
-    }
-
-    var body: some View {
-        NavigationStack {
-            List {
-                ForEach(book.chapters) { chapter in
-                    let isCurrent = chapter.id == currentChapterID
-
-                    Button {
-                        if let firstPage = chapter.pages.first,
-                           let index = book.allPages.firstIndex(where: { $0.id == firstPage.id }) {
-                            currentPageIndex = index
-                        }
-                        dismiss()
-                    } label: {
+                    
+                    Section("Font Size") {
                         HStack(spacing: 12) {
-                            // Active indicator bar
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(isCurrent ? Color.gold : Color.clear)
-                                .frame(width: 3, height: 20)
-
-                            Text(chapter.title)
-                                .foregroundColor(isCurrent ? Color.gold : Color.text)
-                                .fontWeight(isCurrent ? .semibold : .regular)
-
-                            Spacer()
-
-                            if isCurrent {
-                                Text("Current")
-                                    .font(.caption2)
-                                    .foregroundColor(Color.gold)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 3)
-                                    .background(Color.gold.opacity(0.12))
-                                    .cornerRadius(6)
-                            }
-
-                            Image(systemName: "chevron.right")
-                                .font(.caption)
-                                .foregroundColor(Color.text2)
+                            Text("A").font(.system(size: 13, design: .serif)).foregroundColor(Color.text2)
+                            Slider(value: $settings.fontSize, in: 12...28, step: 1)
+                                .accentColor(Color.gold)
+                                .onChange(of: settings.fontSize) { oldValue, newValue in settings.save() }
+                            Text("A").font(.system(size: 22, design: .serif)).foregroundColor(Color.text2)
                         }
+                        .padding(.vertical, 4)
+                        
+                        Text("The old castle stood silent in the mist.")
+                            .font(settings.readerFont.font(size: settings.fontSize))
+                            .foregroundColor(Color.text)
+                            .padding(.vertical, 4)
+                            .listRowBackground(Color.surface)
                     }
-                    .listRowBackground(
-                        isCurrent ? Color.gold.opacity(0.08) : Color.surface
-                    )
+                    
+                    //Changes Background Color
+                    Section("Background") {
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                            ForEach(ReaderBackground.allCases, id: \.rawValue) { theme in
+                                Button {
+                                    settings.backgroundTheme = theme
+                                    settings.save()
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        Circle()
+                                            .fill(theme.backgroundColor)
+                                            .frame(width: 22, height: 22)
+                                            .overlay(Circle().stroke(Color.gold.opacity(0.3), lineWidth: 1))
+                                        Text(theme.displayName).font(.subheadline).foregroundColor(Color.text)
+                                    }
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 10)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(settings.backgroundTheme == theme ? Color.gold.opacity(0.12) : Color.surface2)
+                                    .cornerRadius(10)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .stroke(settings.backgroundTheme == theme ? Color.gold : Color.clear, lineWidth: 1.5)
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                        .listRowBackground(Color.surface)
+                    }
+                    
+                    //Allows for the position fo the reading marker to be changed
+                    Section("Reading Marker") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Marker Position").font(.subheadline).foregroundColor(Color.text)
+                            HStack(spacing: 8) {
+                                Text("Top")
+                                    .font(.caption2)
+                                    .foregroundColor(Color.text2)
+                                Slider(value: $settings.markerPosition, in: 0...1)
+                                    .accentColor(Color.gold)
+                                    .onChange(of: settings.markerPosition) { oldValue, newValue in settings.save() }
+                                Text("Bottom")
+                                    .font(.caption2)
+                                    .foregroundColor(Color.text2)
+                            }
+                            
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(settings.backgroundTheme.backgroundColor)
+                                    .frame(height: 80)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(Color.surface3, lineWidth: 1)
+                                    )
+                                
+                                VStack(alignment: .leading, spacing: 4) {
+                                    ForEach(0..<5) { i in
+                                        RoundedRectangle(cornerRadius: 1)
+                                            .fill(Color.text2.opacity(0.2))
+                                            .frame(width: CGFloat([120, 150, 90, 140, 110][i]), height: 3)
+                                    }
+                                }
+                                .padding(.leading, 12)
+                                .padding(.vertical, 10)
+                                
+                                Rectangle()
+                                    .fill(Color.gold.opacity(0.6))
+                                    .frame(height: 1.5)
+                                    .offset(y: -40 + 80 * CGFloat(settings.markerPosition))
+                            }
+                        }
+                        .padding(.vertical, 4)
+                        .listRowBackground(Color.surface)
+                        
+                        //Changes reading speed for autocroll
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Auto-scroll Speed").font(.subheadline).foregroundColor(Color.text)
+                            HStack(spacing: 8) {
+                                Image(systemName: "tortoise.fill").font(.system(size: 12)).foregroundColor(Color.text2)
+                                Slider(value: $tracker.sliderValue, in: 0...1).accentColor(Color.gold)
+                                Image(systemName: "hare.fill").font(.system(size: 12)).foregroundColor(Color.text2)
+                            }
+                            Text("\(Int(tracker.scrollSpeed)) pts/sec").font(.caption2).foregroundColor(Color.text2)
+                        }
+                        .padding(.vertical, 4)
+                        .listRowBackground(Color.surface)
+                    }
+                }
+                .listStyle(.insetGrouped)
+                .scrollContentBackground(.hidden)
+                .background(Color.bg)
+                .navigationTitle("Reader Settings")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("Done") { dismiss() }.foregroundColor(Color.gold)
+                    }
                 }
             }
-            .listStyle(.insetGrouped)       // fixes first row clipping
-            .scrollContentBackground(.hidden)
             .background(Color.bg)
-            .navigationTitle("Chapters")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }.foregroundColor(Color.gold)
+        }
+    }
+    
+    // MARK: - Chapter List Sheet
+    //Shows a list of all the book chapters
+    struct ChapterListView: View {
+        let book: Book
+        @Binding var currentPageIndex: Int
+        @Environment(\.dismiss) private var dismiss
+        
+        // Compute which chapter the current page belongs to
+        private var currentChapterID: UUID? {
+            let pages = book.allPages
+            guard currentPageIndex < pages.count else { return nil }
+            let pageNumber = pages[currentPageIndex].number
+            return book.chapters.first {
+                $0.pages.contains(where: { $0.number == pageNumber })
+            }?.id
+        }
+        
+        var body: some View {
+            NavigationStack {
+                List {
+                    ForEach(book.chapters) { chapter in
+                        let isCurrent = chapter.id == currentChapterID
+                        
+                        Button {
+                            if let firstPage = chapter.pages.first,
+                               let index = book.allPages.firstIndex(where: { $0.id == firstPage.id }) {
+                                currentPageIndex = index
+                            }
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 12) {
+                                // Active indicator bar
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(isCurrent ? Color.gold : Color.clear)
+                                    .frame(width: 3, height: 20)
+                                
+                                Text(chapter.title)
+                                    .foregroundColor(isCurrent ? Color.gold : Color.text)
+                                    .fontWeight(isCurrent ? .semibold : .regular)
+                                
+                                Spacer()
+                                
+                                if isCurrent {
+                                    Text("Current")
+                                        .font(.caption2)
+                                        .foregroundColor(Color.gold)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 3)
+                                        .background(Color.gold.opacity(0.12))
+                                        .cornerRadius(6)
+                                }
+                                
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundColor(Color.text2)
+                            }
+                        }
+                        .listRowBackground(
+                            isCurrent ? Color.gold.opacity(0.08) : Color.surface
+                        )
+                    }
+                }
+                .listStyle(.insetGrouped)       // fixes first row clipping
+                .scrollContentBackground(.hidden)
+                .background(Color.bg)
+                .navigationTitle("Chapters")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("Done") { dismiss() }.foregroundColor(Color.gold)
+                    }
                 }
             }
+            .background(Color.bg)
         }
-        .background(Color.bg)
     }
-}
+

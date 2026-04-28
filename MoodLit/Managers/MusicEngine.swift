@@ -155,7 +155,7 @@ class MusicEngine: ObservableObject {
                         fileName: audioURL.lastPathComponent
                     )
                     self.currentTrack = streamedFile
-                    self.startCrossfade(with: player)
+                    self.startCrossfade(with: player, instant: false)
                 }
             } catch {
                 print("🎼 Stream failed: \(error.localizedDescription) — falling back to playlist")
@@ -180,18 +180,10 @@ class MusicEngine: ObservableObject {
     }
 
     func stop() {
-        // Kill all timers first — prevents ghost audio
-        for timer in fadeTimers {
-            timer.invalidate()
-        }
+        for timer in fadeTimers { timer.invalidate() }
         fadeTimers.removeAll()
-
-        // Hard-stop everything
-        for player in fadingOutPlayers {
-            player.stop()
-        }
+        for player in fadingOutPlayers { player.stop() }
         fadingOutPlayers.removeAll()
-
         currentPlayer?.stop()
         currentPlayer = nil
         isPlaying = false
@@ -215,39 +207,41 @@ class MusicEngine: ObservableObject {
     private func crossfade(to music: MusicFile) {
         if currentTrack?.fileName == music.fileName { return }
 
-        guard let url = music.fileURL else {
-            print("MusicEngine: File not found — \(music.fileName)")
-            return
-        }
-        guard let player = try? AVAudioPlayer(contentsOf: url) else {
-            print("MusicEngine: Could not create player for \(music.fileName)")
-            return
-        }
+        guard let url = music.fileURL else { return }
+        guard let player = try? AVAudioPlayer(contentsOf: url) else { return }
+        
         currentTrack = music
-        startCrossfade(with: player)
+        startCrossfade(with: player, instant: true)  // ← instant on scene change
     }
 
-    private func startCrossfade(with newPlayer: AVAudioPlayer) {
-        for timer in fadeTimers {
-            timer.invalidate()
-        }
+    private func startCrossfade(with newPlayer: AVAudioPlayer,
+                                 instant: Bool = false) {  // ← ADD
+        for timer in fadeTimers { timer.invalidate() }
         fadeTimers.removeAll()
-
-        for player in fadingOutPlayers {
-            player.stop()
-        }
+        for player in fadingOutPlayers { player.stop() }
         fadingOutPlayers.removeAll()
 
         if let old = currentPlayer {
             fadingOutPlayers.append(old)
-            fadeOut(player: old)
+            if instant {
+                // Scene change — cut old track immediately
+                old.stop()
+                fadingOutPlayers.removeAll()
+            } else {
+                fadeOut(player: old)
+            }
         }
 
-        newPlayer.volume = 0
+        newPlayer.volume = instant ? volume : 0
         newPlayer.numberOfLoops = -1
         newPlayer.play()
         isPlaying = true
-        fadeIn(player: newPlayer, to: volume)
+        if instant {
+            // No fade in — starts immediately at full volume
+            newPlayer.volume = volume
+        } else {
+            fadeIn(player: newPlayer, to: volume)
+        }
         currentPlayer = newPlayer
     }
 

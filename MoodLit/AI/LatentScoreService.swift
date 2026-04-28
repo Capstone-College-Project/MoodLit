@@ -17,7 +17,6 @@ import Foundation
 final class LatentScoreService {
     static let shared = LatentScoreService()
     
-    // Must match your Mac's IP and the port the Python server uses.
     private let endpoint = URL(string: "http://192.168.40.5:8765/generate")!
     
     private init() {

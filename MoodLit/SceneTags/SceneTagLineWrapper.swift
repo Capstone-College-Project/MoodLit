@@ -13,16 +13,15 @@ import SwiftUI
 // MARK: - SceneTagLineWrapper
 
 struct SceneTagLineWrapper<Content: View>: View {
-    let content: Content  //Text content
-    let page: Int        // page number
-    //Line index from lineStaticY
+    let content: Content
+    let page: Int
     let lineIndex: Int
     let sceneTags: [SceneTag]
     let playlist: Playlist?
     let bookID: UUID
     let isTaggingMode: Bool
+    let isActive: Bool  
 
-    //Triggers sheets
     @State private var showCreateEditor = false
     @State private var showEditEditor = false
 
@@ -33,6 +32,7 @@ struct SceneTagLineWrapper<Content: View>: View {
         playlist: Playlist?,
         bookID: UUID,
         isTaggingMode: Bool = false,
+        isActive: Bool = false,
         @ViewBuilder content: () -> Content
     ) {
         self.page = page
@@ -41,7 +41,7 @@ struct SceneTagLineWrapper<Content: View>: View {
         self.playlist = playlist
         self.bookID = bookID
         self.isTaggingMode = isTaggingMode
-        //lets PageView pass in the text view using trailing closure syntax:
+        self.isActive = isActive
         self.content = content()
     }
 
@@ -65,9 +65,11 @@ struct SceneTagLineWrapper<Content: View>: View {
     var body: some View {
         ZStack(alignment: .trailing) {
             HStack(spacing: 0) {
-                // Colored left border — visible when inside a tag
+           
                 Rectangle()
-                    .fill(activeCategory?.color ?? Color.clear)
+                    .fill(isTaggingMode
+                        ? (activeCategory?.color ?? Color.clear)
+                        : Color.clear)
                     .frame(width: 3)
                     .cornerRadius(1.5)
                     .padding(.vertical, 2)
@@ -75,8 +77,9 @@ struct SceneTagLineWrapper<Content: View>: View {
                 ZStack(alignment: .topLeading) {
                     content
 
-                    // Badge on first line of a tag — always tappable to edit
-                    if isTagStart, let category = activeCategory, let tag = activeTag {
+                    if isTaggingMode, isTagStart,
+                       let category = activeCategory,
+                       let tag = activeTag {
                         SceneTagBadge(
                             category: category,
                             intensityLevel: tag.intensityLevel
@@ -89,8 +92,7 @@ struct SceneTagLineWrapper<Content: View>: View {
                 .padding(.leading, 6)
             }
 
-            // Tagging mode hint — + icon on lines without a tag
-            // Tap to create tag when in tagging mode and line has no existing tag
+            // ✅ Plus icon only in tagging mode (already was)
             if isTaggingMode && activeTag == nil {
                 Image(systemName: "plus.circle")
                     .font(.system(size: 13))
@@ -98,6 +100,15 @@ struct SceneTagLineWrapper<Content: View>: View {
                     .padding(.trailing, 6)
                     .allowsHitTesting(false)
             }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard isTaggingMode, activeTag == nil else { return }
+            showCreateEditor = true
+        }
+        .onLongPressGesture {
+            guard activeTag == nil else { return }
+            showCreateEditor = true
         }
         // makes the entire row tappable, not just the visible text pixels.
         .contentShape(Rectangle())

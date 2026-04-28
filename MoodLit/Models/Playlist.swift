@@ -93,7 +93,7 @@ struct EmotionCategory: Identifiable, Codable {
             intensity3: Intensity(nameDescription: "Overflowing happiness, excitement")
         ),
         EmotionCategory(
-            categoryName: "Family / Warmth",
+            categoryName: "Warmth",
             colorHex: "#F4A261",
             intensity1: Intensity(nameDescription: "Comfort, familiarity"),
             intensity2: Intensity(nameDescription: "Connection, bonding"),

@@ -458,6 +458,7 @@ struct AIChapterPickerSheet: View {
                             }
                             .padding(12)
                             .background(Color.surface2)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
                         }
 
                         // Select all / deselect all
