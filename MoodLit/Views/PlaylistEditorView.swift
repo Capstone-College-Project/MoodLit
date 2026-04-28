@@ -13,7 +13,7 @@ struct PlaylistEditorView: View {
     let playlistID: UUID
     var onSave: () -> Void
 
-    @StateObject private var store = PlaylistStore.shared
+    @StateObject private var store = PlaylistManager.shared
     @State private var expandedID: UUID? = nil
     //Vars for the creation of new category
     @State private var showAddCategory = false

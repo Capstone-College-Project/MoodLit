@@ -24,7 +24,7 @@ struct BookReaderView: View {
     //Reflects lastest changes to playlist
     private var playlist: Playlist? {
         guard let pid = book?.assignedPlaylistID else { return nil }
-        return PlaylistStore.shared.playlists.first { $0.id == pid }
+        return PlaylistManager.shared.playlists.first { $0.id == pid }
     }
 
     //Has the audio playblack
@@ -211,7 +211,6 @@ struct BookReaderView: View {
             )
             musicEngine.onLineChanged(page: tracker.activePage, line: tracker.activeLine)
         }
-        // Bug 3 fix: reload music immediately when user flips the AI tags toggle
         .onChange(of: book?.aiTagsEnabled) { _, _ in
             guard let book, let playlist else { return }
             let activeTags = book.aiTagsEnabled
@@ -419,7 +418,7 @@ struct BookReaderView: View {
             tracker.targetLine = book.readingProgress.lineIndex
         }
         
-        //rigger music for current position on open
+        //Trigger music for current position on open
         // detectActiveLine will fire once lineStaticY populates
         // but this handles the case where we already know the line
         musicEngine.onLineChanged(
@@ -1059,7 +1058,7 @@ struct PageView: View {
                         )
                     }
                 }
-                .listStyle(.insetGrouped)       // fixes first row clipping
+                .listStyle(.insetGrouped)   
                 .scrollContentBackground(.hidden)
                 .background(Color.bg)
                 .navigationTitle("Chapters")

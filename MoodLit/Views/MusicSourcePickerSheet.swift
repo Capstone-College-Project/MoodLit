@@ -21,7 +21,7 @@ struct MusicSourcePickerSheet: View {
     
     private var assignedPlaylist: Playlist? {
         guard let pid = book?.assignedPlaylistID else { return nil }
-        return PlaylistStore.shared.playlists.first { $0.id == pid }
+        return PlaylistManager.shared.playlists.first { $0.id == pid }
     }
     
     var body: some View {

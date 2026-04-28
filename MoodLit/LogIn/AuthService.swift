@@ -4,11 +4,6 @@
 //
 //  Created by Anthony Chang Martinez on 3/28/26.
 //
-
-
-// AuthService.swift
-// MoodLit
-
 import Foundation
 import Combine
 

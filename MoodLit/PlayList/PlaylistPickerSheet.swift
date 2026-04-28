@@ -18,7 +18,7 @@ import SwiftUI
 struct PlaylistPickerSheet: View {
     let book: Book
     @Environment(\.dismiss) private var dismiss
-    @ObservedObject private var store = PlaylistStore.shared
+    @ObservedObject private var store = PlaylistManager.shared
     @ObservedObject private var library = LibraryManager.shared
     
     private var currentBook: Book? {

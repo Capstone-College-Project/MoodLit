@@ -8,7 +8,7 @@ import SwiftUI
 import Combine
 
 struct PlaylistListView: View {
-    @StateObject private var store = PlaylistStore.shared
+    @StateObject private var store = PlaylistManager.shared
     @State private var editingPlaylist: Playlist? = nil
     @State private var showNameSheet = false
     @State private var showEditor = false

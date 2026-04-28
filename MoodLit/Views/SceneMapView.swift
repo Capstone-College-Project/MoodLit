@@ -12,7 +12,7 @@ struct SceneMapView: View {
     let bookID: UUID
 
     @ObservedObject private var library = LibraryManager.shared
-    @ObservedObject private var playlistStore = PlaylistStore.shared
+    @ObservedObject private var playlistStore = PlaylistManager.shared
     @Environment(\.dismiss) private var dismiss
 
     @State private var swapTag: SceneTag? = nil

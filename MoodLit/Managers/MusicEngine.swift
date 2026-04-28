@@ -14,7 +14,7 @@ class MusicEngine: ObservableObject {
     @Published var isPlaying: Bool = false
     @Published var currentTrack: MusicFile? = nil
     @Published var currentCategoryName: String? = nil
-    @Published var currentMusicPrompt: String? = nil  // shown in reader when streaming
+    @Published var currentMusicPrompt: String? = nil
 
     // MARK: - Private
     private var currentPlayer: AVAudioPlayer?
@@ -22,7 +22,7 @@ class MusicEngine: ObservableObject {
     private var fadeTimers: [Timer] = []
     private var sceneTags: [SceneTag] = []
     private var playlist: Playlist?
-    private var musicSource: MusicSource = .playlist  // current book's mode
+    private var musicSource: MusicSource = .playlist
     private var activeTagID: UUID? = nil
     private let crossfadeDuration: Float = 1.5
     var volume: Float = 0.7
@@ -98,12 +98,7 @@ class MusicEngine: ObservableObject {
     // MARK: - Stream Mode
     //
     // Uses the scene's AI-generated music prompt to stream from LatentScore.
-    // For now this is stubbed — the prompt is logged to console and the engine
-    // FALLS BACK to the playlist track for the scene's category.
-    //
-    // When LatentScore is wired up, replace the fallback with the actual
-    // streaming call. The fallback will still trigger if a scene has no prompt
-    // (e.g. a manually-created tag, or analysis where Pass 3 failed).
+
 
     private func handleStreamMode(tag: SceneTag) {
         // Always update the displayed category for badge / debug purposes
@@ -123,7 +118,6 @@ class MusicEngine: ObservableObject {
         streamFromLatentScore(prompt: prompt, tag: tag)
     }
 
-    /// STUB: Will eventually call LatentScore AI to stream music for the prompt.
     private func streamFromLatentScore(prompt: String, tag: SceneTag) {
         print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         print("🎼 LATENTSCORE STREAM — \(prompt.prefix(80))")
@@ -211,11 +205,11 @@ class MusicEngine: ObservableObject {
         guard let player = try? AVAudioPlayer(contentsOf: url) else { return }
         
         currentTrack = music
-        startCrossfade(with: player, instant: true)  // ← instant on scene change
+        startCrossfade(with: player, instant: true)
     }
 
     private func startCrossfade(with newPlayer: AVAudioPlayer,
-                                 instant: Bool = false) {  // ← ADD
+                                 instant: Bool = false) {  
         for timer in fadeTimers { timer.invalidate() }
         fadeTimers.removeAll()
         for player in fadingOutPlayers { player.stop() }

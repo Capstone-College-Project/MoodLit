@@ -24,7 +24,6 @@ enum BookType: String, Codable {
     case webNovel
 }
 
-// MARK: - Book
 
 // MARK: - Music Source Mode
 //

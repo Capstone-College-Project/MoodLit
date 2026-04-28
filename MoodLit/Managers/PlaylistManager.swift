@@ -2,7 +2,7 @@
 //  PlaylistManager.swift
 //  MoodLit
 //
-//  Created by Anthony Chang Martinez on 3/8/26.
+//  Created by Anthony Chang Martinez on 4/27/26.
 //
 
 
@@ -39,6 +39,10 @@ class PlaylistManager: ObservableObject {
     func delete(_ id: UUID) {
         playlists.removeAll { $0.id == id }
         save()
+    }
+    
+    func delete(_ playlist: Playlist) {
+        delete(playlist.id)
     }
 
     func delete(at offsets: IndexSet) {
