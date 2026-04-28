@@ -121,6 +121,30 @@ struct SceneTagEditorSheet: View {
                         emotionSection
                         intensitySection
                         musicSection
+
+                        // ── Delete button — only shown when editing existing tag ──
+                        if existingTag != nil {
+                            Button {
+                                deleteTag()
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "trash")
+                                        .font(.system(size: 14))
+                                    Text("Remove Tag")
+                                        .font(.subheadline.weight(.medium))
+                                }
+                                .foregroundColor(.red)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
+                                .background(Color.red.opacity(0.08))
+                                .cornerRadius(12)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(Color.red.opacity(0.25), lineWidth: 1)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                     .padding(.horizontal, 20)
                     .padding(.vertical, 20)
@@ -417,6 +441,15 @@ struct SceneTagEditorSheet: View {
             sceneSummary: existingTag?.sceneSummary
         )
         SceneTagEngine.save(tag, to: bookID)
+        dismiss()
+    }
+    
+    private func deleteTag() {
+        guard let tag = existingTag else { return }
+        guard let idx = LibraryManager.shared.books
+            .firstIndex(where: { $0.id == bookID }) else { return }
+        LibraryManager.shared.books[idx].sceneTags.removeAll { $0.id == tag.id }
+        LibraryManager.shared.save()
         dismiss()
     }
 

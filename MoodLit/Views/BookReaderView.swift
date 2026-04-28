@@ -746,15 +746,29 @@ struct PageView: View {
         var bestDist = CGFloat.infinity
 
         if !lineFrames.isEmpty {
+            // 1) Prefer any line whose frame actually contains the marker
             for (idx, rect) in lineFrames {
-                let screenY = rect.midY - scrollOffset + topPadding
-                let dist = abs(screenY - markerY)
-                if dist < bestDist {
-                    bestDist = dist
+                let screenMinY = rect.minY - scrollOffset + topPadding
+                let screenMaxY = rect.maxY - scrollOffset + topPadding
+                if markerY >= screenMinY && markerY <= screenMaxY {
                     bestIdx = idx
+                    bestDist = 0
+                    break
+                }
+            }
+            // 2) Fallback: closest top-edge (not midY)
+            if bestDist > 0 {
+                for (idx, rect) in lineFrames {
+                    let screenTop = rect.minY - scrollOffset + topPadding
+                    let dist = abs(screenTop - markerY)
+                    if dist < bestDist {
+                        bestDist = dist
+                        bestIdx = idx
+                    }
                 }
             }
         } else if !lineStaticY.isEmpty {
+            // lineStaticY only stores midY — keep as fallback until frames load
             for (idx, y) in lineStaticY {
                 let screenY = y - scrollOffset + topPadding
                 let dist = abs(screenY - markerY)
@@ -767,13 +781,10 @@ struct PageView: View {
             return
         }
 
-        //  Update activeLine only when changed
         if bestIdx != tracker.activeLine {
             tracker.activeLine = bestIdx
         }
 
-        //Always call — MusicEngine guards against re-trigger via activeTagID
-        // This ensures music starts on page load even if bestIdx == activeLine
         musicEngine.onLineChanged(
             page: tracker.activePage,
             line: bestIdx
