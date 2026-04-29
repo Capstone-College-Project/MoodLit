@@ -99,7 +99,7 @@ struct AISceneMusicPrompt: Codable {
 final class OllamaService {
     static let shared = OllamaService()
 
-    private let endpoint = URL(string: "http://192.168.40.5:11434/api/generate")!
+    private let endpoint = URL(string: "http://10.14.95.221:11434/api/generate")!
     private let defaultModel = "llama3.2"
 
     private init() {}
@@ -205,7 +205,7 @@ final class OllamaService {
             system: systemPrompt,
             prompt: prompt,
             schema: schema,
-            model: "mistral-nemo"
+            model: "llama3.2"
         )
 
         guard let data = raw.data(using: .utf8) else {

@@ -17,7 +17,7 @@ import Foundation
 final class LatentScoreService {
     static let shared = LatentScoreService()
     
-    private let endpoint = URL(string: "http://192.168.40.5:8765/generate")!
+    private let endpoint = URL(string: "http://10.14.95.221:8765/generate")!
     
     private init() {
         createCacheDirectoryIfNeeded()
